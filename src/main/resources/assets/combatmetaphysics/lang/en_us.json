@@ -1,0 +1,13 @@
+{
+  "itemGroup.combatmetaphysics": "Example Mod Tab",
+  "block.combatmetaphysics.example_block": "Example Block",
+  "item.combatmetaphysics.example_item": "Example Item",
+
+  "combatmetaphysics.configuration.title": "Combat Metaphysics Configs",
+  "combatmetaphysics.configuration.section.combatmetaphysics.common.toml": "Combat Metaphysics Configs",
+  "combatmetaphysics.configuration.section.combatmetaphysics.common.toml.title": "Combat Metaphysics Configs",
+  "combatmetaphysics.configuration.items": "Item List",
+  "combatmetaphysics.configuration.logDirtBlock": "Log Dirt Block",
+  "combatmetaphysics.configuration.magicNumberIntroduction": "Magic Number Text",
+  "combatmetaphysics.configuration.magicNumber": "Magic Number"
+}

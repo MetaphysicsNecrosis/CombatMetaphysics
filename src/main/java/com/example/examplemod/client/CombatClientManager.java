@@ -93,7 +93,10 @@ public class CombatClientManager implements QTEClientManager.QTEEventListener {
     
     // Управление состояниями игроков
     public PlayerStateMachine getPlayerState(UUID playerId) {
-        return playerStates.computeIfAbsent(playerId, PlayerStateMachine::new);
+        return playerStates.computeIfAbsent(playerId, id -> {
+            ResourceManager resourceManager = getPlayerResources(id);
+            return PlayerStateMachine.getInstance(id, resourceManager);
+        });
     }
     
     public ResourceManager getPlayerResources(UUID playerId) {

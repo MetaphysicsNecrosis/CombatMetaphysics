@@ -1,5 +1,5 @@
 {
-  "itemGroup.combatmetaphysics": "Example Mod Tab",
+  "itemGroup.combatmetaphysics": "Combat Metaphysics",
   "block.combatmetaphysics.example_block": "Example Block",
   "item.combatmetaphysics.example_item": "Example Item",
 
@@ -9,5 +9,33 @@
   "combatmetaphysics.configuration.items": "Item List",
   "combatmetaphysics.configuration.logDirtBlock": "Log Dirt Block",
   "combatmetaphysics.configuration.magicNumberIntroduction": "Magic Number Text",
-  "combatmetaphysics.configuration.magicNumber": "Magic Number"
+  "combatmetaphysics.configuration.magicNumber": "Magic Number",
+
+  "key.categories.combatmetaphysics": "Combat Metaphysics",
+  "key.combatmetaphysics.magic_cast": "Cast Magic",
+  "key.combatmetaphysics.melee_attack": "Melee Attack (Hold)",
+  "key.combatmetaphysics.parry": "Parry",
+  "key.combatmetaphysics.block": "Block",
+  "key.combatmetaphysics.dodge": "Dodge",
+
+  "combatmetaphysics.sounds.magic_prepare": "Magic Preparation",
+  "combatmetaphysics.sounds.magic_cast": "Magic Casting",
+  "combatmetaphysics.sounds.spell_success": "Spell Success",
+  "combatmetaphysics.sounds.spell_fail": "Spell Failed",
+  "combatmetaphysics.sounds.melee_charge": "Melee Charging",
+  "combatmetaphysics.sounds.melee_swing": "Melee Swing",
+  "combatmetaphysics.sounds.melee_hit": "Melee Hit",
+  "combatmetaphysics.sounds.melee_charged_hit": "Powerful Strike",
+  "combatmetaphysics.sounds.parry_success": "Successful Parry",
+  "combatmetaphysics.sounds.parry_fail": "Failed Parry",
+  "combatmetaphysics.sounds.block_hit": "Blocked Attack",
+  "combatmetaphysics.sounds.dodge_whoosh": "Dodge Movement",
+  "combatmetaphysics.sounds.state_transition": "Combat State Change",
+  "combatmetaphysics.sounds.interrupt": "Action Interrupted",
+  "combatmetaphysics.sounds.resource_low": "Low Resources",
+  "combatmetaphysics.sounds.cooldown_ready": "Ready for Action",
+  "combatmetaphysics.sounds.qte_start": "Quick Time Event",
+  "combatmetaphysics.sounds.qte_success": "QTE Success",
+  "combatmetaphysics.sounds.qte_fail": "QTE Failed",
+  "combatmetaphysics.sounds.qte_perfect": "Perfect QTE"
 }

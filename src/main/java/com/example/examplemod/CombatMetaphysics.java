@@ -27,8 +27,11 @@ import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import com.example.examplemod.commands.CombatCommands;
 import com.example.examplemod.server.CombatServerManager;
+import com.example.examplemod.network.CombatNetworkHandler;
+import com.example.examplemod.sounds.CombatSounds;
 import net.neoforged.neoforge.registries.DeferredBlock;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredItem;
@@ -78,6 +81,8 @@ public class CombatMetaphysics {
         ITEMS.register(modEventBus);
         // Register the Deferred Register to the mod event bus so tabs get registered
         CREATIVE_MODE_TABS.register(modEventBus);
+        // Register combat sounds
+        CombatSounds.SOUND_EVENTS.register(modEventBus);
 
         // Register ourselves for server and other game events we are interested in.
         // Note that this is necessary if and only if we want *this* class (CombatMetaphysics) to respond directly to events.
@@ -86,6 +91,9 @@ public class CombatMetaphysics {
 
         // Register the item to a creative tab
         modEventBus.addListener(this::addCreative);
+        
+        // Register combat network handlers
+        modEventBus.addListener(CombatNetworkHandler::register);
 
         // Register our mod's ModConfigSpec so that FML can create and load the config file for us
         modContainer.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
@@ -127,5 +135,11 @@ public class CombatMetaphysics {
         // Register our combat commands
         CombatCommands.register(event.getDispatcher());
         LOGGER.info("Combat commands registered");
+    }
+    
+    @SubscribeEvent
+    public void onServerTick(ServerTickEvent.Post event) {
+        // Обновляем combat систему каждый тик
+        CombatServerManager.getInstance().tick();
     }
 }

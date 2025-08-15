@@ -1,0 +1,232 @@
+{
+  "magic_prepare": {
+    "subtitle": "combatmetaphysics.sounds.magic_prepare",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:magic/prepare1",
+        "volume": 0.8,
+        "pitch": 1.0
+      },
+      {
+        "name": "combatmetaphysics:magic/prepare2",
+        "volume": 0.8,
+        "pitch": 1.0
+      }
+    ]
+  },
+  "magic_cast": {
+    "subtitle": "combatmetaphysics.sounds.magic_cast",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:magic/cast1",
+        "volume": 1.0,
+        "pitch": 1.0
+      },
+      {
+        "name": "combatmetaphysics:magic/cast2",
+        "volume": 1.0,
+        "pitch": 1.0
+      }
+    ]
+  },
+  "spell_success": {
+    "subtitle": "combatmetaphysics.sounds.spell_success",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:magic/success",
+        "volume": 1.0,
+        "pitch": 1.0
+      }
+    ]
+  },
+  "spell_fail": {
+    "subtitle": "combatmetaphysics.sounds.spell_fail",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:magic/fail",
+        "volume": 0.8,
+        "pitch": 0.8
+      }
+    ]
+  },
+  "melee_charge": {
+    "subtitle": "combatmetaphysics.sounds.melee_charge",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:melee/charge",
+        "volume": 0.6,
+        "pitch": 1.0
+      }
+    ]
+  },
+  "melee_swing": {
+    "subtitle": "combatmetaphysics.sounds.melee_swing",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:melee/swing1",
+        "volume": 0.8,
+        "pitch": 1.0
+      },
+      {
+        "name": "combatmetaphysics:melee/swing2",
+        "volume": 0.8,
+        "pitch": 1.0
+      },
+      {
+        "name": "combatmetaphysics:melee/swing3",
+        "volume": 0.8,
+        "pitch": 1.0
+      }
+    ]
+  },
+  "melee_hit": {
+    "subtitle": "combatmetaphysics.sounds.melee_hit",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:melee/hit1",
+        "volume": 1.0,
+        "pitch": 1.0
+      },
+      {
+        "name": "combatmetaphysics:melee/hit2",
+        "volume": 1.0,
+        "pitch": 1.0
+      }
+    ]
+  },
+  "melee_charged_hit": {
+    "subtitle": "combatmetaphysics.sounds.melee_charged_hit",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:melee/charged_hit",
+        "volume": 1.2,
+        "pitch": 0.9
+      }
+    ]
+  },
+  "parry_success": {
+    "subtitle": "combatmetaphysics.sounds.parry_success",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:defense/parry_success",
+        "volume": 1.0,
+        "pitch": 1.0
+      }
+    ]
+  },
+  "parry_fail": {
+    "subtitle": "combatmetaphysics.sounds.parry_fail",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:defense/parry_fail",
+        "volume": 0.6,
+        "pitch": 0.8
+      }
+    ]
+  },
+  "block_hit": {
+    "subtitle": "combatmetaphysics.sounds.block_hit",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:defense/block1",
+        "volume": 0.8,
+        "pitch": 1.0
+      },
+      {
+        "name": "combatmetaphysics:defense/block2",
+        "volume": 0.8,
+        "pitch": 1.0
+      }
+    ]
+  },
+  "dodge_whoosh": {
+    "subtitle": "combatmetaphysics.sounds.dodge_whoosh",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:defense/dodge",
+        "volume": 0.7,
+        "pitch": 1.2
+      }
+    ]
+  },
+  "state_transition": {
+    "subtitle": "combatmetaphysics.sounds.state_transition",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:system/transition",
+        "volume": 0.3,
+        "pitch": 1.0
+      }
+    ]
+  },
+  "interrupt": {
+    "subtitle": "combatmetaphysics.sounds.interrupt",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:system/interrupt",
+        "volume": 1.0,
+        "pitch": 1.0
+      }
+    ]
+  },
+  "resource_low": {
+    "subtitle": "combatmetaphysics.sounds.resource_low",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:system/resource_low",
+        "volume": 0.5,
+        "pitch": 1.0
+      }
+    ]
+  },
+  "cooldown_ready": {
+    "subtitle": "combatmetaphysics.sounds.cooldown_ready",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:system/cooldown_ready",
+        "volume": 0.5,
+        "pitch": 1.0
+      }
+    ]
+  },
+  "qte_start": {
+    "subtitle": "combatmetaphysics.sounds.qte_start",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:qte/start",
+        "volume": 0.8,
+        "pitch": 1.0
+      }
+    ]
+  },
+  "qte_success": {
+    "subtitle": "combatmetaphysics.sounds.qte_success",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:qte/success",
+        "volume": 0.8,
+        "pitch": 1.0
+      }
+    ]
+  },
+  "qte_fail": {
+    "subtitle": "combatmetaphysics.sounds.qte_fail",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:qte/fail",
+        "volume": 0.6,
+        "pitch": 0.8
+      }
+    ]
+  },
+  "qte_perfect": {
+    "subtitle": "combatmetaphysics.sounds.qte_perfect",
+    "sounds": [
+      {
+        "name": "combatmetaphysics:qte/perfect",
+        "volume": 1.0,
+        "pitch": 1.0
+      }
+    ]
+  }
+}

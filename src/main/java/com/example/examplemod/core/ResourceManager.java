@@ -150,6 +150,27 @@ public class ResourceManager {
     public float getCurrentStamina() { return currentStamina; }
     public float getMaxStamina() { return maxStamina; }
     
+    // ActionResolver compatibility methods
+    public boolean hasMana(UUID playerId, float amount) {
+        return canReserveMana(amount);
+    }
+    
+    public boolean reserveMana(UUID playerId, float amount) {
+        return tryReserveMana(amount, "action resolver");
+    }
+    
+    public boolean hasStamina(UUID playerId, float amount) {
+        return canUseStamina(amount);
+    }
+    
+    public float getCurrentStamina(UUID playerId) {
+        return getCurrentStamina();
+    }
+    
+    public float getCurrentMana(UUID playerId) {
+        return getCurrentMana();
+    }
+    
     public float getManaPercentage() { return getTotalMana() / maxMana; }
     public float getStaminaPercentage() { return currentStamina / maxStamina; }
     

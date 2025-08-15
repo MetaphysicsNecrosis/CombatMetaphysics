@@ -25,7 +25,10 @@ import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
+import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
+import com.example.examplemod.commands.CombatCommands;
+import com.example.examplemod.server.CombatServerManager;
 import net.neoforged.neoforge.registries.DeferredBlock;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredItem;
@@ -113,5 +116,16 @@ public class CombatMetaphysics {
     public void onServerStarting(ServerStartingEvent event) {
         // Do something when the server starts
         LOGGER.info("HELLO from server starting");
+        
+        // Инициализируем серверный combat менеджер
+        CombatServerManager.getInstance();
+        LOGGER.info("Combat Server Manager initialized");
+    }
+    
+    @SubscribeEvent
+    public void onRegisterCommands(RegisterCommandsEvent event) {
+        // Register our combat commands
+        CombatCommands.register(event.getDispatcher());
+        LOGGER.info("Combat commands registered");
     }
 }

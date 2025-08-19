@@ -1,7 +1,9 @@
 package com.example.examplemod.core.actions.core;
 
+import com.example.examplemod.core.actions.CoreActionExecutor;
 import com.example.examplemod.core.pipeline.ActionContext;
 import com.example.examplemod.core.pipeline.ExecutionResult;
+import com.example.examplemod.CombatMetaphysics;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
@@ -48,6 +50,9 @@ public class AreaScanAction extends CoreActionExecutor {
         context.setPipelineData("scanCenter", center);
         context.setPipelineData("scanRange", range);
         
+        CombatMetaphysics.LOGGER.info("AreaScanAction: Scan completed - {} entities, {} blocks", 
+            scanResult.entities().size(), scanResult.blocks().size());
+        
         return ExecutionResult.success(scanResult);
     }
     
@@ -77,7 +82,7 @@ public class AreaScanAction extends CoreActionExecutor {
         AABB searchBox = new AABB(center.subtract(range, range, range), 
                                   center.add(range, range, range));
         
-        List<Entity> entities = world.getEntities(null, searchBox, entity -> {
+        List<Entity> entities = world.getEntities((Entity) null, searchBox, entity -> {
             // Фильтры
             if (entity.equals(context.getPlayer())) {
                 return false; // Исключаем самого игрока

@@ -60,7 +60,7 @@
         "damageType": "magical_explosion",
         "targets": "@scannedEntities"
       },
-      "required": true,
+      "required": false,
       "breakOnSuccess": false,
       "conditions": [
         {

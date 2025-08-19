@@ -1,5 +1,6 @@
 package com.example.examplemod.core.defense;
 
+import com.example.examplemod.core.defense.layers.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

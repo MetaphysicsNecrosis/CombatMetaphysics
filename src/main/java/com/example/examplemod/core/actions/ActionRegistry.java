@@ -1,5 +1,7 @@
 package com.example.examplemod.core.actions;
 
+import com.example.examplemod.core.actions.composite.CompositeActionDefinition;
+import com.example.examplemod.core.actions.core.*;
 import com.example.examplemod.core.pipeline.ActionExecutor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

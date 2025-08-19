@@ -1,6 +1,7 @@
 package com.example.examplemod.core.actions.composite;
 
 import com.example.examplemod.core.pipeline.ActionContext;
+import com.example.examplemod.core.pipeline.ExecutionResult;
 
 import java.util.List;
 import java.util.Map;
@@ -36,42 +37,7 @@ public class CompositeActionDefinition {
     public Map<String, Object> getDefaultParameters() { return defaultParameters; }
 }
 
-/**
- * Шаг в Composite Action
- */
-class CompositeActionStep {
-    private final String actionType;
-    private final Map<String, Object> parameters;
-    private final boolean required;
-    private final boolean breakOnSuccess;
-    private final List<CompositeCondition> stepConditions;
-    
-    public CompositeActionStep(String actionType, 
-                              Map<String, Object> parameters, 
-                              boolean required,
-                              boolean breakOnSuccess,
-                              List<CompositeCondition> stepConditions) {
-        this.actionType = actionType;
-        this.parameters = parameters;
-        this.required = required;
-        this.breakOnSuccess = breakOnSuccess;
-        this.stepConditions = stepConditions;
-    }
-    
-    public String getActionType() { return actionType; }
-    public Map<String, Object> getParameters() { return parameters; }
-    public boolean isRequired() { return required; }
-    public boolean shouldBreakOnSuccess() { return breakOnSuccess; }
-    public List<CompositeCondition> getStepConditions() { return stepConditions; }
-}
-
-/**
- * Условие для выполнения Composite Action или шага
- */
-interface CompositeCondition {
-    boolean evaluate(ActionContext context);
-    String getDescription();
-}
+// CompositeActionStep теперь в отдельном файле
 
 /**
  * Контекст выполнения Composite Action

@@ -8,6 +8,7 @@ public class DefenseLayerResult {
     private final boolean success;
     private final boolean damageCompletelyBlocked;
     private final DamageEvent modifiedDamageEvent;
+    private final DamageEvent additionalDamageEvent;
     private final float damageReduced;
     private final float damageReflected;
     private final String description;
@@ -17,6 +18,7 @@ public class DefenseLayerResult {
         this.success = builder.success;
         this.damageCompletelyBlocked = builder.damageCompletelyBlocked;
         this.modifiedDamageEvent = builder.modifiedDamageEvent;
+        this.additionalDamageEvent = builder.additionalDamageEvent;
         this.damageReduced = builder.damageReduced;
         this.damageReflected = builder.damageReflected;
         this.description = builder.description;
@@ -27,6 +29,7 @@ public class DefenseLayerResult {
     public boolean isSuccess() { return success; }
     public boolean isDamageCompletelyBlocked() { return damageCompletelyBlocked; }
     public DamageEvent getModifiedDamageEvent() { return modifiedDamageEvent; }
+    public DamageEvent getAdditionalDamageEvent() { return additionalDamageEvent; }
     public float getDamageReduced() { return damageReduced; }
     public float getDamageReflected() { return damageReflected; }
     public String getDescription() { return description; }
@@ -41,6 +44,7 @@ public class DefenseLayerResult {
         private boolean success = false;
         private boolean damageCompletelyBlocked = false;
         private DamageEvent modifiedDamageEvent;
+        private DamageEvent additionalDamageEvent;
         private float damageReduced = 0.0f;
         private float damageReflected = 0.0f;
         private String description = "";
@@ -62,6 +66,11 @@ public class DefenseLayerResult {
         
         public Builder modifiedDamageEvent(DamageEvent event) {
             this.modifiedDamageEvent = event;
+            return this;
+        }
+        
+        public Builder additionalDamageEvent(DamageEvent event) {
+            this.additionalDamageEvent = event;
             return this;
         }
         

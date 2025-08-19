@@ -1,5 +1,6 @@
 package com.example.examplemod.core.actions.core;
 
+import com.example.examplemod.core.actions.CoreActionExecutor;
 import com.example.examplemod.core.pipeline.ActionContext;
 import com.example.examplemod.core.pipeline.ExecutionResult;
 import net.minecraft.world.entity.Entity;
@@ -34,7 +35,8 @@ public class DamageAction extends CoreActionExecutor {
         DamageSource damageSource = createDamageSource(context, damageType);
         
         // Применяем урон
-        boolean success = livingTarget.hurt(damageSource, damage);
+        livingTarget.hurt(damageSource, damage);
+        boolean success = true; // В Minecraft 1.21.1 hurt() возвращает void
         
         if (success) {
             // Сохраняем результат для Effects
@@ -53,13 +55,12 @@ public class DamageAction extends CoreActionExecutor {
      */
     private DamageSource createDamageSource(ActionContext context, String damageType) {
         // TODO: Implement proper damage source creation based on type
+        // Используем magic damage для магических заклинаний
+        if (damageType != null && damageType.contains("magical")) {
+            return context.getWorld().damageSources().magic();
+        }
         // Пока используем базовый generic damage
         return context.getWorld().damageSources().generic();
-    }
-    
-    @Override
-    public boolean isCritical() {
-        return true; // Урон - критичное действие
     }
     
     /**

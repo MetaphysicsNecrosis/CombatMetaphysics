@@ -11,6 +11,8 @@ public class DamageEvent {
     private final float damage;
     private final DamageType damageType;
     private final boolean blocked;
+    private final boolean reflected;
+    private final boolean converted;
     private final long timestamp;
     
     private DamageEvent(Builder builder) {
@@ -19,15 +21,20 @@ public class DamageEvent {
         this.damage = builder.damage;
         this.damageType = builder.damageType;
         this.blocked = builder.blocked;
+        this.reflected = builder.reflected;
+        this.converted = builder.converted;
         this.timestamp = System.currentTimeMillis();
     }
     
     // Getters
     public Entity getAttacker() { return attacker; }
     public Entity getTarget() { return target; }
+    public Entity getDefender() { return target; } // Алиас для защитника
     public float getDamage() { return damage; }
     public DamageType getDamageType() { return damageType; }
     public boolean isBlocked() { return blocked; }
+    public boolean isReflected() { return reflected; }
+    public boolean isConverted() { return converted; }
     public long getTimestamp() { return timestamp; }
     
     // Builder pattern
@@ -41,7 +48,9 @@ public class DamageEvent {
                 .target(original.target)
                 .damage(original.damage)
                 .damageType(original.damageType)
-                .blocked(original.blocked);
+                .blocked(original.blocked)
+                .reflected(original.reflected)
+                .converted(original.converted);
     }
     
     public static class Builder {
@@ -50,6 +59,8 @@ public class DamageEvent {
         private float damage;
         private DamageType damageType = DamageType.GENERIC;
         private boolean blocked = false;
+        private boolean reflected = false;
+        private boolean converted = false;
         
         public Builder attacker(Entity attacker) {
             this.attacker = attacker;
@@ -73,6 +84,21 @@ public class DamageEvent {
         
         public Builder blocked(boolean blocked) {
             this.blocked = blocked;
+            return this;
+        }
+        
+        public Builder reflected(boolean reflected) {
+            this.reflected = reflected;
+            return this;
+        }
+        
+        public Builder converted(boolean converted) {
+            this.converted = converted;
+            return this;
+        }
+        
+        public Builder defender(Entity defender) {
+            this.target = defender;
             return this;
         }
         

@@ -1,10 +1,12 @@
 package com.example.examplemod.core.actions.core;
 
+import com.example.examplemod.core.actions.CoreActionExecutor;
 import com.example.examplemod.core.pipeline.ActionContext;
 import com.example.examplemod.core.pipeline.ExecutionResult;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
+import net.minecraft.core.Holder;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 
@@ -49,7 +51,7 @@ public class StatusEffectAction extends CoreActionExecutor {
         }
         
         List<LivingEntity> affectedEntities = new ArrayList<>();
-        MobEffectInstance effectInstance = new MobEffectInstance(effect, duration, amplifier);
+        MobEffectInstance effectInstance = new MobEffectInstance(Holder.direct(effect), duration, amplifier);
         
         for (LivingEntity target : targets) {
             target.addEffect(effectInstance);
@@ -66,18 +68,18 @@ public class StatusEffectAction extends CoreActionExecutor {
     
     private MobEffect getEffectByType(String effectType) {
         return switch (effectType) {
-            case "poison" -> MobEffects.POISON;
-            case "weakness" -> MobEffects.WEAKNESS;
-            case "slowness" -> MobEffects.MOVEMENT_SLOWDOWN;
-            case "blindness" -> MobEffects.BLINDNESS;
-            case "nausea" -> MobEffects.CONFUSION;
-            case "wither" -> MobEffects.WITHER;
-            case "levitation" -> MobEffects.LEVITATION;
-            case "glowing" -> MobEffects.GLOWING;
-            case "regeneration" -> MobEffects.REGENERATION;
-            case "strength" -> MobEffects.DAMAGE_BOOST;
-            case "speed" -> MobEffects.MOVEMENT_SPEED;
-            case "resistance" -> MobEffects.DAMAGE_RESISTANCE;
+            case "poison" -> MobEffects.POISON.value();
+            case "weakness" -> MobEffects.WEAKNESS.value();
+            case "slowness" -> MobEffects.SLOWNESS.value();
+            case "blindness" -> MobEffects.BLINDNESS.value();
+            case "nausea" -> MobEffects.NAUSEA.value();
+            case "wither" -> MobEffects.WITHER.value();
+            case "levitation" -> MobEffects.LEVITATION.value();
+            case "glowing" -> MobEffects.GLOWING.value();
+            case "regeneration" -> MobEffects.REGENERATION.value();
+            case "strength" -> MobEffects.STRENGTH.value();
+            case "speed" -> MobEffects.SPEED.value();
+            case "resistance" -> MobEffects.RESISTANCE.value();
             default -> null;
         };
     }

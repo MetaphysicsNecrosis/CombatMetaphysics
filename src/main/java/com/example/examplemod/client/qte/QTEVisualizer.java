@@ -31,20 +31,21 @@ public class QTEVisualizer {
     private static final int OK_COLOR = 0xFFFF7F00;               // Оранжевый
     private static final int MISS_COLOR = 0xFFFF0000;             // Красный
     
-    // Позиция QTE на экране (центр)
-    private int centerX, centerY;
+    // Позиция QTE на экране (левая сторона)
+    private int qteX, qteY;
     
     public QTEVisualizer() {
-        updateScreenCenter();
+        updateQTEPosition();
     }
     
     /**
-     * Обновляет центральную позицию при изменении размера экрана
+     * Обновляет позицию QTE в левой части экрана
      */
-    public void updateScreenCenter() {
+    public void updateQTEPosition() {
         Minecraft mc = Minecraft.getInstance();
-        this.centerX = mc.getWindow().getGuiScaledWidth() / 2;
-        this.centerY = mc.getWindow().getGuiScaledHeight() / 2;
+        // Размещаем QTE слева - на 1/4 ширины экрана от левого края
+        this.qteX = mc.getWindow().getGuiScaledWidth() / 4;
+        this.qteY = mc.getWindow().getGuiScaledHeight() / 2;
     }
     
     /**
@@ -59,7 +60,7 @@ public class QTEVisualizer {
         Minecraft mc = Minecraft.getInstance();
         if (mc.options.hideGui) return; // Не показываем если UI скрыт
         
-        updateScreenCenter();
+        updateQTEPosition();
         long currentTime = System.currentTimeMillis();
         
         // Отрисовываем каждую точку попадания
@@ -108,7 +109,7 @@ public class QTEVisualizer {
         int color = (alpha << 24) | (APPROACH_CIRCLE_COLOR & 0xFFFFFF);
         
         // Отрисовываем кольцо (не заполненный круг)
-        renderCircleOutline(graphics, centerX, centerY, radius, color, 3);
+        renderCircleOutline(graphics, qteX, qteY, radius, color, 3);
     }
     
     /**
@@ -118,10 +119,10 @@ public class QTEVisualizer {
         int targetRadius = HIT_CIRCLE_SIZE / 2;
         
         // Заполненный зеленый круг
-        renderCircleFilled(graphics, centerX, centerY, targetRadius, TARGET_CIRCLE_COLOR);
+        renderCircleFilled(graphics, qteX, qteY, targetRadius, TARGET_CIRCLE_COLOR);
         
         // Темная рамка вокруг цели
-        renderCircleOutline(graphics, centerX, centerY, targetRadius, HIT_CIRCLE_BORDER, 2);
+        renderCircleOutline(graphics, qteX, qteY, targetRadius, HIT_CIRCLE_BORDER, 2);
     }
     
     /**
@@ -134,8 +135,8 @@ public class QTEVisualizer {
         int textWidth = Minecraft.getInstance().font.width(keyName);
         int textHeight = 9; // Высота шрифта
         
-        int bgX = centerX - textWidth / 2 - 2;
-        int bgY = centerY - textHeight / 2 - 1;
+        int bgX = qteX - textWidth / 2 - 2;
+        int bgY = qteY - textHeight / 2 - 1;
         int bgWidth = textWidth + 4;
         int bgHeight = textHeight + 2;
         
@@ -144,7 +145,7 @@ public class QTEVisualizer {
         
         // Белый текст клавиши
         graphics.drawCenteredString(Minecraft.getInstance().font, keyName, 
-                                  centerX, centerY - 4, 0xFFFFFFFF);
+                                  qteX, qteY - 4, 0xFFFFFFFF);
     }
     
     /**
@@ -178,18 +179,18 @@ public class QTEVisualizer {
         color = (alpha << 24) | (color & 0xFFFFFF);
         
         // Отрисовываем результат
-        renderCircleFilled(graphics, centerX, centerY, radius, color);
+        renderCircleFilled(graphics, qteX, qteY, radius, color);
         
         // Текст результата
         String resultText = hitPoint.getResultText();
         graphics.drawCenteredString(Minecraft.getInstance().font, resultText,
-                                  centerX, centerY - radius - 15, color);
+                                  qteX, qteY - radius - 15, color);
         
         // Процент точности для PERFECT/GREAT/GOOD
         if (hitPoint.isSuccessfulHit()) {
             String scoreText = hitPoint.getScorePercentage() + "%";
             graphics.drawCenteredString(Minecraft.getInstance().font, scoreText,
-                                      centerX, centerY + radius + 5, 0xFFFFFFFF);
+                                      qteX, qteY + radius + 5, 0xFFFFFFFF);
         }
     }
     
@@ -210,26 +211,26 @@ public class QTEVisualizer {
         
         String progressText = completed + "/" + total;
         graphics.drawString(Minecraft.getInstance().font, progressText,
-                          centerX - 50, centerY - 100, 0xFFFFFFFF, false);
+                          qteX - 50, qteY - 100, 0xFFFFFFFF, false);
         
         // Общее время QTE
         long elapsedTime = currentTime - qteStartTime;
         String timeText = String.format("%.1fs", elapsedTime / 1000f);
         graphics.drawString(Minecraft.getInstance().font, timeText,
-                          centerX + 30, centerY - 100, 0xFFFFFFFF, false);
+                          qteX + 30, qteY - 100, 0xFFFFFFFF, false);
     }
     
     /**
      * Вспомогательный метод: отрисовка заполненного круга
      */
-    private void renderCircleFilled(GuiGraphics graphics, int centerX, int centerY, 
+    private void renderCircleFilled(GuiGraphics graphics, int posX, int posY, 
                                    int radius, int color) {
         // Простая реализация через квадраты (можно улучшить)
         for (int x = -radius; x <= radius; x++) {
             for (int y = -radius; y <= radius; y++) {
                 if (x * x + y * y <= radius * radius) {
-                    graphics.fill(centerX + x, centerY + y, 
-                                centerX + x + 1, centerY + y + 1, color);
+                    graphics.fill(posX + x, posY + y, 
+                                posX + x + 1, posY + y + 1, color);
                 }
             }
         }
@@ -238,7 +239,7 @@ public class QTEVisualizer {
     /**
      * Вспомогательный метод: отрисовка контура круга
      */
-    private void renderCircleOutline(GuiGraphics graphics, int centerX, int centerY,
+    private void renderCircleOutline(GuiGraphics graphics, int posX, int posY,
                                    int radius, int color, int thickness) {
         // Простая реализация через кольцо
         int outerRadiusSquared = (radius + thickness) * (radius + thickness);
@@ -248,8 +249,8 @@ public class QTEVisualizer {
             for (int y = -radius - thickness; y <= radius + thickness; y++) {
                 int distanceSquared = x * x + y * y;
                 if (distanceSquared <= outerRadiusSquared && distanceSquared >= innerRadiusSquared) {
-                    graphics.fill(centerX + x, centerY + y,
-                                centerX + x + 1, centerY + y + 1, color);
+                    graphics.fill(posX + x, posY + y,
+                                posX + x + 1, posY + y + 1, color);
                 }
             }
         }

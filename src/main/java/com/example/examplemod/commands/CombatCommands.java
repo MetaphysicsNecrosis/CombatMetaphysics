@@ -5,6 +5,7 @@ import com.example.examplemod.client.qte.QTEType;
 import com.example.examplemod.client.qte.QTEClientManager;
 import com.example.examplemod.client.qte.OSUStyleQTEEvent;
 import com.example.examplemod.client.CombatHUDRenderer;
+import com.example.examplemod.commands.TestMeteorStrikeCommand;
 import com.example.examplemod.core.*;
 import com.example.examplemod.server.CombatServerManager;
 import com.mojang.brigadier.CommandDispatcher;
@@ -21,6 +22,10 @@ import java.util.UUID;
 public class CombatCommands {
     
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
+        // Register meteor strike test command
+        TestMeteorStrikeCommand.register(dispatcher);
+        TestMeteorStrikeCommand.registerDebugCommand(dispatcher);
+        
         dispatcher.register(Commands.literal("combatmetaphysics")
             .then(Commands.literal("debug")
                 .then(Commands.literal("state")

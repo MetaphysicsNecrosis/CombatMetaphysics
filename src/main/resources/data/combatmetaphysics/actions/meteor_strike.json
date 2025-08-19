@@ -1,0 +1,108 @@
+{
+  "actionType": "meteor_strike",
+  "description": "Мощное заклинание метеоритного удара с area damage и разрушением блоков",
+  "conditions": [
+    {
+      "type": "mana_requirement",
+      "amount": 75
+    },
+    {
+      "type": "spell_known",
+      "spellId": "meteor_strike"
+    },
+    {
+      "type": "area_clear",
+      "radius": 5
+    }
+  ],
+  "defaultParameters": {
+    "damage": 30.0,
+    "range": 8.0,
+    "blockDestructionPower": 3.5
+  },
+  "steps": [
+    {
+      "actionType": "area_scan",
+      "parameters": {
+        "scanType": "both",
+        "range": "${range}"
+      },
+      "required": true,
+      "breakOnSuccess": false,
+      "conditions": []
+    },
+    {
+      "actionType": "particle_effect",
+      "parameters": {
+        "effectType": "meteor_warning",
+        "duration": 1000,
+        "scale": 2.0
+      },
+      "required": false,
+      "breakOnSuccess": false,
+      "conditions": []
+    },
+    {
+      "actionType": "sound_effect", 
+      "parameters": {
+        "soundId": "meteor_incoming",
+        "volume": 1.0,
+        "pitch": 1.0
+      },
+      "required": false,
+      "breakOnSuccess": false,
+      "conditions": []
+    },
+    {
+      "actionType": "damage",
+      "parameters": {
+        "damage": "${damage}",
+        "damageType": "magical_explosion",
+        "targets": "@scannedEntities"
+      },
+      "required": true,
+      "breakOnSuccess": false,
+      "conditions": [
+        {
+          "type": "has_scanned_entities"
+        }
+      ]
+    },
+    {
+      "actionType": "block_destruction",
+      "parameters": {
+        "power": "${blockDestructionPower}",
+        "targets": "@scannedBlocks",
+        "protectionChecks": ["hardness", "magical_protection"]
+      },
+      "required": false,
+      "breakOnSuccess": false,
+      "conditions": [
+        {
+          "type": "has_scanned_blocks"
+        }
+      ]
+    },
+    {
+      "actionType": "particle_effect",
+      "parameters": {
+        "effectType": "meteor_explosion",
+        "duration": 2000,
+        "scale": 3.0
+      },
+      "required": false,
+      "breakOnSuccess": false,
+      "conditions": []
+    },
+    {
+      "actionType": "knockback",
+      "parameters": {
+        "strength": 2.5,
+        "targets": "@scannedEntities"
+      },
+      "required": false,
+      "breakOnSuccess": false,
+      "conditions": []
+    }
+  ]
+}

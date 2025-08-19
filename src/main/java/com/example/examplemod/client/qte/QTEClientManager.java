@@ -6,12 +6,21 @@ import org.slf4j.LoggerFactory;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * SINGLEPLAYER QTE Client Manager с OSU-style визуализацией
+ * Управляет активными QTE событиями локально, без сетевой синхронизации
+ */
 public class QTEClientManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(QTEClientManager.class);
     private static QTEClientManager INSTANCE;
     
-    private final Map<UUID, QTEEvent> activeEvents = new ConcurrentHashMap<>();
+    // OSU-style QTE система
+    private final Map<UUID, OSUStyleQTEEvent> activeQTEs = new ConcurrentHashMap<>();
+    private final QTEVisualizer visualizer = new QTEVisualizer();
     private final List<QTEEventListener> listeners = new ArrayList<>();
+    
+    // Backward compatibility для старой системы
+    private final Map<UUID, QTEEvent> activeEvents = new ConcurrentHashMap<>();
     
     private QTEClientManager() {}
     
@@ -23,7 +32,48 @@ public class QTEClientManager {
     }
     
     public void tick() {
-        // Проверяем истекшие QTE
+        // Обновляем новую OSU-style QTE систему
+        tickOSUStyleQTEs();
+        
+        // Backward compatibility: обновляем старую систему
+        tickLegacyQTEs();
+    }
+    
+    /**
+     * SINGLEPLAYER: Обновление OSU-style QTE системы
+     */
+    private void tickOSUStyleQTEs() {
+        long currentTime = System.currentTimeMillis();
+        Iterator<Map.Entry<UUID, OSUStyleQTEEvent>> iterator = activeQTEs.entrySet().iterator();
+        
+        while (iterator.hasNext()) {
+            Map.Entry<UUID, OSUStyleQTEEvent> entry = iterator.next();
+            OSUStyleQTEEvent qteEvent = entry.getValue();
+            
+            // Принудительно истекаем hit points которые пропустили
+            for (QTEHitPoint hitPoint : qteEvent.getHitPoints()) {
+                hitPoint.forceExpireIfNeeded(currentTime);
+            }
+            
+            // Проверяем завершение QTE
+            if (qteEvent.hasExpired() && qteEvent.isActive()) {
+                qteEvent.forceComplete();
+                notifyOSUQTECompleted(qteEvent);
+                LOGGER.debug("OSU QTE {} timed out", entry.getKey());
+            }
+            
+            // Удаляем завершенные QTE
+            if (qteEvent.isCompleted()) {
+                iterator.remove();
+                LOGGER.debug("OSU QTE {} removed (completed)", entry.getKey());
+            }
+        }
+    }
+    
+    /**
+     * Backward compatibility: обновление старой QTE системы
+     */
+    private void tickLegacyQTEs() {
         Iterator<Map.Entry<UUID, QTEEvent>> iterator = activeEvents.entrySet().iterator();
         while (iterator.hasNext()) {
             Map.Entry<UUID, QTEEvent> entry = iterator.next();
@@ -33,7 +83,7 @@ public class QTEClientManager {
                 event.forceTimeout();
                 notifyEventCompleted(event);
                 iterator.remove();
-                LOGGER.debug("QTE {} timed out", entry.getKey());
+                LOGGER.debug("Legacy QTE {} timed out", entry.getKey());
             } else if (event.isCompleted()) {
                 iterator.remove();
             }
@@ -50,16 +100,54 @@ public class QTEClientManager {
             id, type, chainPosition, duration);
     }
     
+    /**
+     * SINGLEPLAYER: Создание нового OSU-style QTE
+     */
+    public UUID startOSUStyleQTE(OSUStyleQTEEvent.QTEType type, String spellName) {
+        UUID qteId = UUID.randomUUID();
+        OSUStyleQTEEvent qteEvent = new OSUStyleQTEEvent(qteId, type, spellName);
+        
+        activeQTEs.put(qteId, qteEvent);
+        notifyOSUQTEStarted(qteEvent);
+        
+        LOGGER.info("Started OSU-style QTE: {} of type {} for spell '{}'", 
+                  qteId, type, spellName);
+        
+        return qteId;
+    }
+    
+    /**
+     * SINGLEPLAYER: Обработка нажатий клавиш для OSU-style QTE
+     */
     public boolean processKeyInput(int keyCode) {
         boolean handled = false;
+        long pressTime = System.currentTimeMillis();
         
-        for (QTEEvent event : activeEvents.values()) {
-            if (event.processKeyInput(keyCode)) {
+        // Обрабатываем новую OSU-style систему
+        for (OSUStyleQTEEvent qteEvent : activeQTEs.values()) {
+            if (qteEvent.processKeyInput(keyCode, pressTime)) {
                 handled = true;
                 
-                if (event.isCompleted()) {
-                    notifyEventCompleted(event);
-                    LOGGER.debug("QTE {} completed with score: {}", event.getId(), event.getScore());
+                if (qteEvent.isCompleted()) {
+                    notifyOSUQTECompleted(qteEvent);
+                    LOGGER.debug("OSU QTE {} completed: {}", 
+                               qteEvent.getEventId(), qteEvent.getFinalResult());
+                }
+                break; // Обрабатываем только одно QTE за раз
+            }
+        }
+        
+        // Backward compatibility: обрабатываем старую систему
+        if (!handled) {
+            for (QTEEvent event : activeEvents.values()) {
+                if (event.processKeyInput(keyCode)) {
+                    handled = true;
+                    
+                    if (event.isCompleted()) {
+                        notifyEventCompleted(event);
+                        LOGGER.debug("Legacy QTE {} completed with score: {}", 
+                                   event.getId(), event.getScore());
+                    }
                 }
             }
         }
@@ -77,12 +165,20 @@ public class QTEClientManager {
     }
     
     public void cancelAllQTE() {
+        // Отменяем OSU-style QTE
+        for (OSUStyleQTEEvent qteEvent : activeQTEs.values()) {
+            qteEvent.forceComplete();
+            notifyOSUQTECancelled(qteEvent);
+        }
+        activeQTEs.clear();
+        
+        // Legacy QTE
         for (QTEEvent event : activeEvents.values()) {
             event.forceTimeout();
             notifyEventCancelled(event);
         }
         activeEvents.clear();
-        LOGGER.debug("Cancelled all active QTE events");
+        LOGGER.debug("Cancelled all QTE events (OSU + Legacy)");
     }
     
     public QTEEvent getActiveQTE(UUID id) {
@@ -94,11 +190,11 @@ public class QTEClientManager {
     }
     
     public boolean hasActiveQTE() {
-        return !activeEvents.isEmpty();
+        return !activeEvents.isEmpty() || !activeQTEs.isEmpty();
     }
     
     public int getActiveQTECount() {
-        return activeEvents.size();
+        return activeEvents.size() + activeQTEs.size();
     }
     
     // Event listeners
@@ -140,9 +236,99 @@ public class QTEClientManager {
         }
     }
     
+    // === OSU-STYLE QTE МЕТОДЫ ===
+    
+    /**
+     * Получает активные OSU-style QTE для отрисовки
+     */
+    public Collection<OSUStyleQTEEvent> getActiveOSUQTEs() {
+        return new ArrayList<>(activeQTEs.values());
+    }
+    
+    /**
+     * Получает визуализатор для рендеринга
+     */
+    public QTEVisualizer getVisualizer() {
+        return visualizer;
+    }
+    
+    /**
+     * Отменяет OSU-style QTE
+     */
+    public void cancelOSUQTE(UUID qteId) {
+        OSUStyleQTEEvent qteEvent = activeQTEs.remove(qteId);
+        if (qteEvent != null) {
+            qteEvent.forceComplete();
+            notifyOSUQTECancelled(qteEvent);
+            LOGGER.debug("Cancelled OSU QTE {}", qteId);
+        }
+    }
+    
+    /**
+     * Расширенная версия cancelAllQTE для OSU QTE
+     */
+    public void cancelAllOSUQTE() {
+        // Отменяем OSU-style QTE
+        for (OSUStyleQTEEvent qteEvent : activeQTEs.values()) {
+            qteEvent.forceComplete();
+            notifyOSUQTECancelled(qteEvent);
+        }
+        activeQTEs.clear();
+        LOGGER.debug("Cancelled all OSU QTE events");
+    }
+    
+    // === УВЕДОМЛЕНИЯ ДЛЯ OSU-STYLE QTE ===
+    
+    private void notifyOSUQTEStarted(OSUStyleQTEEvent qteEvent) {
+        for (QTEEventListener listener : listeners) {
+            try {
+                if (listener instanceof OSUQTEEventListener) {
+                    ((OSUQTEEventListener) listener).onOSUQTEStarted(qteEvent);
+                }
+            } catch (Exception e) {
+                LOGGER.error("Error in OSU QTE event listener", e);
+            }
+        }
+    }
+    
+    private void notifyOSUQTECompleted(OSUStyleQTEEvent qteEvent) {
+        for (QTEEventListener listener : listeners) {
+            try {
+                if (listener instanceof OSUQTEEventListener) {
+                    ((OSUQTEEventListener) listener).onOSUQTECompleted(qteEvent);
+                }
+            } catch (Exception e) {
+                LOGGER.error("Error in OSU QTE event listener", e);
+            }
+        }
+    }
+    
+    private void notifyOSUQTECancelled(OSUStyleQTEEvent qteEvent) {
+        for (QTEEventListener listener : listeners) {
+            try {
+                if (listener instanceof OSUQTEEventListener) {
+                    ((OSUQTEEventListener) listener).onOSUQTECancelled(qteEvent);
+                }
+            } catch (Exception e) {
+                LOGGER.error("Error in OSU QTE event listener", e);
+            }
+        }
+    }
+    
+    // === ИНТЕРФЕЙСЫ ДЛЯ LISTENERS ===
+    
     public interface QTEEventListener {
         void onQTEStarted(QTEEvent event);
         void onQTECompleted(QTEEvent event);
         void onQTECancelled(QTEEvent event);
+    }
+    
+    /**
+     * Расширенный интерфейс для OSU-style QTE событий
+     */
+    public interface OSUQTEEventListener extends QTEEventListener {
+        default void onOSUQTEStarted(OSUStyleQTEEvent qteEvent) {}
+        default void onOSUQTECompleted(OSUStyleQTEEvent qteEvent) {}
+        default void onOSUQTECancelled(OSUStyleQTEEvent qteEvent) {}
     }
 }

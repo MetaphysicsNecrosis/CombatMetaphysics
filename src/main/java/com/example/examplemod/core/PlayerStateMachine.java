@@ -22,6 +22,7 @@ public class PlayerStateMachine {
     private PlayerState currentState;
     private long stateChangeTime;
     private String currentAction;
+    private Player playerInstance; // Кэшируем Player объект для движения
     
     // Интегрированные системы
     private final ResourceManager resourceManager;
@@ -29,6 +30,7 @@ public class PlayerStateMachine {
     private final DirectionalAttackSystem attackSystem;
     private final DefensiveActionsManager defenseSystem;
     private final InterruptionSystem interruptionSystem;
+    private final RecoveryPeriodSystem recoverySystem;
     
     private PlayerStateMachine(UUID playerId, ResourceManager resourceManager) {
         this.playerId = playerId;
@@ -42,6 +44,7 @@ public class PlayerStateMachine {
         this.attackSystem = new DirectionalAttackSystem(resourceManager);
         this.defenseSystem = new DefensiveActionsManager(resourceManager);
         this.interruptionSystem = new InterruptionSystem(this);
+        this.recoverySystem = new RecoveryPeriodSystem();
     }
     
     /**
@@ -76,6 +79,13 @@ public class PlayerStateMachine {
      * Переход состояния с указанием типа действия
      */
     public boolean tryTransition(PlayerState newState, String action, ActionResolver.ActionType actionType) {
+        // Проверяем период восстановления
+        if (!recoverySystem.canTransitionTo(playerId, newState)) {
+            String blockingReason = recoverySystem.getBlockingReason(playerId, newState);
+            LOGGER.debug("State transition blocked by recovery period for player {}: {}", playerId, blockingReason);
+            return false;
+        }
+        
         // Создаем запрос на действие
         ActionResolver.ActionRequest request = new ActionResolver.ActionRequest(
             playerId, actionType, newState, action);
@@ -89,12 +99,16 @@ public class PlayerStateMachine {
             stateChangeTime = System.currentTimeMillis();
             currentAction = action != null ? action : "";
             
+            // Синхронизируем ограничения движения
+            PlayerMovementController.syncWithPlayerState(playerId, newState);
+            
             LOGGER.debug("Player {} state transition: {} -> {} (action: {}, type: {})", 
                 playerId, oldState, newState, action, actionType);
             
             // Уведомляем систему прерываний об успешном переходе
             if (oldState == PlayerState.INTERRUPTED) {
                 interruptionSystem.clearInterruption(playerId);
+                recoverySystem.clearRecoveryPeriod(playerId); // Очищаем период восстановления при выходе из прерывания
             }
             
             return true;
@@ -113,21 +127,41 @@ public class PlayerStateMachine {
         stateChangeTime = System.currentTimeMillis();
         currentAction = reason != null ? reason : "";
         
+        // Синхронизируем ограничения движения при принудительном переходе
+        PlayerMovementController.syncWithPlayerState(playerId, newState);
+        
         LOGGER.warn("Forced state transition for player {}: {} -> {} (reason: {})", 
             playerId, oldState, newState, reason);
         
         // Очищаем действие в ActionResolver
         actionResolver.clearAction(playerId);
+        
+        // Очищаем системы при выходе из прерванного состояния
+        if (oldState == PlayerState.INTERRUPTED) {
+            interruptionSystem.clearInterruption(playerId);
+            recoverySystem.clearRecoveryPeriod(playerId);
+        }
     }
     
     /**
      * Прерывание через InterruptionSystem
      */
     public boolean interrupt(InterruptionSystem.InterruptionType type, String reason) {
+        PlayerState stateBeforeInterruption = currentState;
+        
         InterruptionSystem.InterruptionRequest request = 
             new InterruptionSystem.InterruptionRequest(playerId, null, type, reason);
         
         InterruptionSystem.InterruptionResult result = interruptionSystem.processInterruption(request);
+        
+        if (result.isSuccess()) {
+            // Запускаем период восстановления согласно Base_Rules.txt
+            recoverySystem.processInterruptionRecovery(playerId, stateBeforeInterruption, type, reason);
+            
+            // Синхронизируем ограничения движения для прерванного состояния
+            PlayerMovementController.syncWithPlayerState(playerId, result.getResultingState());
+        }
+        
         return result.isSuccess();
     }
     
@@ -192,9 +226,41 @@ public class PlayerStateMachine {
     public DirectionalAttackSystem.AttackResult executeMeleeAttack() {
         if (tryTransition(PlayerState.MELEE_ATTACKING, "Executing melee attack", 
                          ActionResolver.ActionType.MELEE_ATTACK)) {
-            return attackSystem.executeAttack(playerId);
+            DirectionalAttackSystem.AttackResult result = attackSystem.executeAttack(playerId);
+            
+            // Применяем анимационное движение если атака успешна
+            if (result.isSuccess()) {
+                DirectionalAttackSystem.AttackData attackData = attackSystem.getCurrentAttack(playerId);
+                if (attackData != null) {
+                    // Получаем Player объект для движения (предполагается, что он доступен в контексте)
+                    applyAttackMovement(attackData.getDirection());
+                }
+            }
+            
+            return result;
         }
         return new DirectionalAttackSystem.AttackResult(false, "Invalid state for melee attack", 0, 0, false);
+    }
+    
+    /**
+     * Устанавливает Player объект для движения
+     */
+    public void setPlayerInstance(Player player) {
+        this.playerInstance = player;
+    }
+    
+    
+    /**
+     * Применяет движение атаки
+     */
+    private void applyAttackMovement(DirectionalAttackSystem.AttackDirection direction) {
+        Player player = this.playerInstance;
+        if (player != null) {
+            PlayerMovementController.applyAttackMovement(player, direction);
+            LOGGER.debug("Applied attack movement for player {} with direction {}", playerId, direction);
+        } else {
+            LOGGER.warn("Cannot apply attack movement - no player instance for {}", playerId);
+        }
     }
     
     // === ЗАЩИТНЫЕ ДЕЙСТВИЯ ===
@@ -224,9 +290,32 @@ public class PlayerStateMachine {
         if (tryTransition(targetState, "Executing defense: " + type, 
                          ActionResolver.ActionType.DEFENSIVE_ACTION)) {
             // Активируем защитную систему
-            return defenseSystem.activateDefense(playerId, type);
+            boolean success = defenseSystem.activateDefense(playerId, type);
+            
+            // Применяем движение уклонения если нужно
+            if (success && type == DefensiveActionsManager.DefensiveType.DODGE) {
+                applyDodgeMovement();
+            }
+            
+            return success;
         }
         return false;
+    }
+    
+    /**
+     * Применяет движение уклонения
+     */
+    private void applyDodgeMovement() {
+        Player player = this.playerInstance;
+        if (player != null) {
+            // Определяем направление уклонения на основе ввода игрока
+            // TODO: Получить направление от input system
+            PlayerMovementController.DodgeDirection direction = PlayerMovementController.DodgeDirection.BACKWARD;
+            PlayerMovementController.applyDodgeMovement(player, direction);
+            LOGGER.debug("Applied dodge movement for player {}", playerId);
+        } else {
+            LOGGER.warn("Cannot apply dodge movement - no player instance for {}", playerId);
+        }
     }
     
     // === СИСТЕМА ВОССТАНОВЛЕНИЯ ===
@@ -253,6 +342,144 @@ public class PlayerStateMachine {
     public boolean wasInterrupted(UUID playerId) {
         return interruptionSystem.isInterrupted(playerId);
     }
+    
+    // === СИСТЕМА TICK И ОБСЛУЖИВАНИЕ ===
+    
+    /**
+     * Обновляет состояние всех систем игрока
+     */
+    public void tick() {
+        // Обновляем системы восстановления
+        recoverySystem.tick();
+        
+        // Очищаем истекшие защитные действия
+        defenseSystem.advancedTick();
+        
+        // Очищаем истекшие атаки
+        attackSystem.cleanupExpiredAttacks(10000); // 10 секунд максимальный возраст
+        attackSystem.cleanupExpiredCombos();
+        
+        // Очищаем истекшие прерывания
+        interruptionSystem.cleanupExpiredInterruptions(5000); // 5 секунд
+        
+        // Автоматический переход из INTERRUPTED в IDLE при завершении периода восстановления
+        if (currentState == PlayerState.INTERRUPTED && !recoverySystem.isInRecoveryPeriod(playerId)) {
+            tryTransition(PlayerState.IDLE, "Recovery period completed");
+        }
+    }
+    
+    // === ГЕТТЕРЫ ДЛЯ ИНТЕГРИРОВАННЫХ СИСТЕМ ===
+    
+    public RecoveryPeriodSystem getRecoverySystem() { 
+        return recoverySystem; 
+    }
+    
+    public DirectionalAttackSystem getAttackSystem() { 
+        return attackSystem; 
+    }
+    
+    public DefensiveActionsManager getDefenseSystem() { 
+        return defenseSystem; 
+    }
+    
+    public InterruptionSystem getInterruptionSystem() { 
+        return interruptionSystem; 
+    }
+    
+    public ResourceManager getResourceManager() { 
+        return resourceManager; 
+    }
+    
+    // === ПОЛНАЯ ИНТЕГРАЦИЯ С ДВИЖЕНИЕМ ===
+    
+    /**
+     * Очищает все состояния игрока при отключении или сбросе
+     */
+    public void cleanup() {
+        // Очищаем все ограничения движения
+        PlayerMovementController.removeMovementRestriction(playerId);
+        
+        // Очищаем периоды восстановления
+        recoverySystem.clearRecoveryPeriod(playerId);
+        
+        // Очищаем прерывания
+        interruptionSystem.clearInterruption(playerId);
+        
+        // Отменяем активные действия
+        if (attackSystem.isCharging(playerId) || attackSystem.isAttacking(playerId)) {
+            attackSystem.cancelCharging(playerId);
+        }
+        
+        if (defenseSystem.isDefending(playerId)) {
+            defenseSystem.deactivateDefense(playerId);
+        }
+        
+        // Принудительно переводим в IDLE
+        forceTransition(PlayerState.IDLE, "Player cleanup");
+        
+        LOGGER.info("Cleaned up combat state for player {}", playerId);
+    }
+    
+    /**
+     * Получает детальную информацию о состоянии игрока для отладки
+     */
+    public Map<String, Object> getDebugInfo() {
+        Map<String, Object> info = new HashMap<>();
+        
+        // Базовая информация о состоянии
+        info.put("playerId", playerId.toString());
+        info.put("currentState", currentState.name());
+        info.put("timeInState", getTimeInCurrentState());
+        info.put("currentAction", currentAction);
+        
+        // Информация о движении
+        PlayerMovementController.MovementRestriction restriction = 
+            PlayerMovementController.getMovementRestriction(playerId);
+        info.put("movementRestricted", restriction != null);
+        if (restriction != null) {
+            info.put("restrictionType", restriction.getRestrictingState().name());
+            info.put("restrictionDuration", restriction.getDuration());
+        }
+        
+        // Информация о восстановлении
+        info.put("inRecoveryPeriod", recoverySystem.isInRecoveryPeriod(playerId));
+        if (recoverySystem.isInRecoveryPeriod(playerId)) {
+            RecoveryPeriodSystem.RecoveryPeriod recovery = recoverySystem.getCurrentRecovery(playerId);
+            info.put("recoveryType", recovery.getType().name());
+            info.put("recoveryProgress", recovery.getRecoveryProgress());
+            info.put("recoveryRemainingMs", recovery.getRemainingTime());
+        }
+        
+        // Информация о боевых системах
+        info.put("isCharging", attackSystem.isCharging(playerId));
+        info.put("isAttacking", attackSystem.isAttacking(playerId));
+        info.put("isDefending", defenseSystem.isDefending(playerId));
+        info.put("isInterrupted", interruptionSystem.isInterrupted(playerId));
+        
+        // Ресурсы
+        info.put("currentStamina", resourceManager.getCurrentStamina(playerId));
+        info.put("currentMana", resourceManager.getCurrentMana(playerId));
+        info.put("reservedMana", resourceManager.getReservedMana());
+        
+        return info;
+    }
+    
+    /**
+     * Статический метод для полной очистки всех игроков
+     */
+    public static void cleanupAllPlayers() {
+        instances.values().forEach(PlayerStateMachine::cleanup);
+        PlayerMovementController.clearAllRestrictions();
+        LOGGER.info("Cleaned up all player combat states");
+    }
+    
+    /**
+     * Получает все активные экземпляры state machine
+     */
+    public static Map<UUID, PlayerStateMachine> getAllInstances() {
+        return new HashMap<>(instances);
+    }
+    
     
     /**
      * Получает время начала QTE для игрока
@@ -285,29 +512,6 @@ public class PlayerStateMachine {
     
     // === TICK СИСТЕМА ===
     
-    /**
-     * Обновляет state machine и все подсистемы
-     */
-    public void tick() {
-        // Обновляем ресурсы
-        resourceManager.tick();
-        
-        // Обновляем защитную систему
-        defenseSystem.tick();
-        
-        // Очищаем устаревшие данные
-        attackSystem.cleanupExpiredAttacks(30000); // 30 секунд
-        interruptionSystem.cleanupExpiredInterruptions(60000); // 60 секунд
-        actionResolver.cleanupExpiredActions(30000); // 30 секунд
-        
-        // Проверяем автопереходы состояний по таймауту
-        checkStateTimeouts();
-        
-        // Принудительно проверяем состояние каждые 100 тиков (5 секунд)
-        if (System.currentTimeMillis() % 5000 < 50) {
-            validateAndFixState();
-        }
-    }
     
     /**
      * Проверяет и исправляет некорректные состояния
@@ -319,6 +523,11 @@ public class PlayerStateMachine {
         if (timeInState > 30000) { // 30 секунд
             LOGGER.warn("Player {} stuck in state {} for {}ms, forcing reset", 
                 playerId, currentState, timeInState);
+            
+            // Очищаем все ограничения движения при принудительном сбросе
+            PlayerMovementController.removeMovementRestriction(playerId);
+            recoverySystem.clearRecoveryPeriod(playerId);
+            
             forceTransition(PlayerState.IDLE, "Stuck state auto-reset");
             return;
         }
@@ -337,6 +546,18 @@ public class PlayerStateMachine {
                     forceTransition(PlayerState.IDLE, "Melee system mismatch");
                 }
             }
+        }
+        
+        // Проверяем соответствие ограничений движения текущему состоянию
+        boolean shouldRestrict = PlayerMovementController.shouldRestrictMovement(currentState);
+        boolean isRestricted = !PlayerMovementController.canPlayerMove(playerId);
+        
+        if (shouldRestrict && !isRestricted) {
+            LOGGER.debug("Player {} should be restricted in state {} but isn't - fixing", playerId, currentState);
+            PlayerMovementController.syncWithPlayerState(playerId, currentState);
+        } else if (!shouldRestrict && isRestricted) {
+            LOGGER.debug("Player {} is restricted in state {} but shouldn't be - fixing", playerId, currentState);
+            PlayerMovementController.removeMovementRestriction(playerId);
         }
     }
     
@@ -385,10 +606,6 @@ public class PlayerStateMachine {
     public boolean isActive() { return currentState.isActive(); }
     public boolean canStartNewAction() { return currentState == PlayerState.IDLE; }
     
-    // Доступ к подсистемам
-    public ResourceManager getResourceManager() { return resourceManager; }
+    public Player getPlayerInstance() { return playerInstance; }
     public ActionResolver getActionResolver() { return actionResolver; }
-    public DirectionalAttackSystem getAttackSystem() { return attackSystem; }
-    public DefensiveActionsManager getDefenseSystem() { return defenseSystem; }
-    public InterruptionSystem getInterruptionSystem() { return interruptionSystem; }
 }

@@ -2,6 +2,8 @@ package com.example.examplemod.commands;
 
 import com.example.examplemod.CombatMetaphysics;
 import com.example.examplemod.client.qte.QTEType;
+import com.example.examplemod.client.qte.QTEClientManager;
+import com.example.examplemod.client.qte.OSUStyleQTEEvent;
 import com.example.examplemod.client.CombatHUDRenderer;
 import com.example.examplemod.core.*;
 import com.example.examplemod.server.CombatServerManager;
@@ -41,6 +43,20 @@ public class CombatCommands {
                     )
                     .then(Commands.literal("precision")
                         .executes(ctx -> testQTE(ctx, QTEType.PRECISION))
+                    )
+                )
+                .then(Commands.literal("osuqte")
+                    .then(Commands.literal("sequence")
+                        .executes(ctx -> testOSUQTE(ctx, OSUStyleQTEEvent.QTEType.SEQUENCE))
+                    )
+                    .then(Commands.literal("timing")
+                        .executes(ctx -> testOSUQTE(ctx, OSUStyleQTEEvent.QTEType.TIMING))
+                    )
+                    .then(Commands.literal("rapid")
+                        .executes(ctx -> testOSUQTE(ctx, OSUStyleQTEEvent.QTEType.RAPID))
+                    )
+                    .then(Commands.literal("precision")
+                        .executes(ctx -> testOSUQTE(ctx, OSUStyleQTEEvent.QTEType.PRECISION))
                     )
                 )
                 .then(Commands.literal("mana")
@@ -391,6 +407,68 @@ public class CombatCommands {
             }
         } catch (Exception e) {
             context.getSource().sendFailure(Component.literal("Error: " + e.getMessage()));
+        }
+        return 1;
+    }
+    
+    /**
+     * OSU-STYLE QTE ТЕСТИРОВАНИЕ
+     * SINGLEPLAYER: Локальное создание и запуск OSU-style QTE
+     */
+    private static int testOSUQTE(CommandContext<CommandSourceStack> context, OSUStyleQTEEvent.QTEType qteType) {
+        try {
+            if (context.getSource().isPlayer()) {
+                var player = context.getSource().getPlayerOrException();
+                UUID playerId = player.getUUID();
+                
+                // Определяем имя заклинания в зависимости от типа QTE
+                String spellName = switch (qteType) {
+                    case SEQUENCE -> "Fireball Combo";
+                    case TIMING -> "Lightning Strike";
+                    case RAPID -> "Magic Missile Barrage";
+                    case PRECISION -> "Arcane Orb";
+                };
+                
+                // Создаем и запускаем OSU-style QTE через клиентский менеджер
+                UUID qteId = QTEClientManager.getInstance().startOSUStyleQTE(qteType, spellName);
+                
+                context.getSource().sendSuccess(() -> Component.literal(
+                    String.format("Started OSU-style QTE: %s (%s)", 
+                                qteType.name(), spellName)
+                ), false);
+                
+                // Логируем детали QTE для отладки
+                CombatMetaphysics.LOGGER.info("OSU QTE Test - Type: {}, Spell: {}, ID: {}, Player: {}", 
+                    qteType, spellName, qteId, playerId);
+                
+                // Получаем активное QTE для дополнительной информации
+                var activeQTE = QTEClientManager.getInstance().getActiveOSUQTEs().stream()
+                    .filter(qte -> qte.getEventId().equals(qteId))
+                    .findFirst();
+                
+                if (activeQTE.isPresent()) {
+                    var qte = activeQTE.get();
+                    CombatMetaphysics.LOGGER.info("QTE Details - Hit Points: {}, Total Duration: {}ms", 
+                        qte.getHitPoints().size(), qte.getTotalDuration());
+                    
+                    // Показываем детали hit points в консоли
+                    for (int i = 0; i < qte.getHitPoints().size(); i++) {
+                        var hitPoint = qte.getHitPoints().get(i);
+                        CombatMetaphysics.LOGGER.info("Hit Point {}: Key={}, Target Time={}ms from start", 
+                            i + 1, hitPoint.getKeyCode(), 
+                            hitPoint.getTargetTime() - qte.getStartTime());
+                    }
+                }
+                
+                // Дополнительное сообщение с инструкциями
+                context.getSource().sendSuccess(() -> Component.literal(
+                    "Watch the center of your screen for OSU-style circles! Press the indicated keys when circles overlap."
+                ), false);
+                
+            }
+        } catch (Exception e) {
+            context.getSource().sendFailure(Component.literal("OSU QTE Error: " + e.getMessage()));
+            CombatMetaphysics.LOGGER.error("Failed to start OSU QTE test", e);
         }
         return 1;
     }

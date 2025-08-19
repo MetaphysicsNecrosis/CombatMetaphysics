@@ -2,6 +2,9 @@ package com.example.examplemod.client;
 
 import com.example.examplemod.client.qte.QTEClientManager;
 import com.example.examplemod.client.qte.QTEEvent;
+import com.example.examplemod.client.qte.OSUStyleQTEEvent;
+import com.example.examplemod.client.qte.QTEVisualizer;
+import com.example.examplemod.client.qte.QTESoundManager;
 import com.example.examplemod.client.ui.QTEHUD;
 import com.example.examplemod.client.ui.ResourceHUD;
 import com.example.examplemod.core.PlayerStateMachine;
@@ -16,18 +19,24 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-public class CombatClientManager implements QTEClientManager.QTEEventListener {
+public class CombatClientManager implements QTEClientManager.OSUQTEEventListener {
     private static final Logger LOGGER = LoggerFactory.getLogger(CombatClientManager.class);
     private static CombatClientManager INSTANCE;
     
     private final Map<UUID, PlayerStateMachine> playerStates = new HashMap<>();
     private final Map<UUID, ResourceManager> playerResources = new HashMap<>();
     private final QTEClientManager qteManager;
+    private final QTESoundManager soundManager;
     
+    // Legacy QTE support  
     private QTEEvent currentQTE;
+    
+    // OSU-style QTE support
+    private OSUStyleQTEEvent currentOSUQTE;
     
     private CombatClientManager() {
         this.qteManager = QTEClientManager.getInstance();
+        this.soundManager = QTESoundManager.getInstance();
         this.qteManager.addListener(this);
     }
     
@@ -46,12 +55,41 @@ public class CombatClientManager implements QTEClientManager.QTEEventListener {
             resourceManager.tick();
         }
         
-        // Проверяем текущую QTE
+        // Обновляем OSU-style QTE
+        updateOSUQTE();
+        
+        // Legacy QTE support
+        updateLegacyQTE();
+    }
+    
+    /**
+     * SINGLEPLAYER: Обновление текущего OSU-style QTE
+     */
+    private void updateOSUQTE() {
+        // Проверяем текущее OSU QTE
+        if (currentOSUQTE != null && currentOSUQTE.isCompleted()) {
+            currentOSUQTE = null;
+        }
+        
+        // Если нет активного OSU QTE, берем первое доступное
+        if (currentOSUQTE == null) {
+            var activeOSUQTEs = qteManager.getActiveOSUQTEs();
+            if (!activeOSUQTEs.isEmpty()) {
+                currentOSUQTE = activeOSUQTEs.iterator().next();
+            }
+        }
+    }
+    
+    /**
+     * Backward compatibility: обновление legacy QTE
+     */
+    private void updateLegacyQTE() {
+        // Проверяем текущую legacy QTE
         if (currentQTE != null && (currentQTE.isCompleted() || currentQTE.isExpired())) {
             currentQTE = null;
         }
         
-        // Если нет активной QTE, берем первую доступную
+        // Если нет активной legacy QTE, берем первую доступную
         if (currentQTE == null) {
             var activeQTEs = qteManager.getAllActiveQTE();
             if (!activeQTEs.isEmpty()) {
@@ -76,8 +114,13 @@ public class CombatClientManager implements QTEClientManager.QTEEventListener {
             CombatHUDRenderer.render(graphics, screenWidth, screenHeight);
         }
         
-        // Рендер QTE
-        if (currentQTE != null) {
+        // Рендер OSU-style QTE (приоритет над legacy)
+        if (currentOSUQTE != null && currentOSUQTE.isActive()) {
+            QTEVisualizer visualizer = qteManager.getVisualizer();
+            visualizer.renderQTE(graphics, currentOSUQTE.getHitPoints(), currentOSUQTE.getStartTime());
+        } 
+        // Backward compatibility: рендер legacy QTE
+        else if (currentQTE != null) {
             QTEHUD.render(graphics, currentQTE, screenWidth, screenHeight);
         }
     }
@@ -188,5 +231,74 @@ public class CombatClientManager implements QTEClientManager.QTEEventListener {
                 resources.getCurrentStamina(), resources.getMaxStamina());
         }
         LOGGER.info("Active QTEs: {}", qteManager.getActiveQTECount());
+        LOGGER.info("Active OSU QTEs: {}", qteManager.getActiveOSUQTEs().size());
+    }
+    
+    // === OSU-STYLE QTE EVENT LISTENERS ===
+    
+    @Override
+    public void onOSUQTEStarted(OSUStyleQTEEvent qteEvent) {
+        LOGGER.debug("OSU QTE started: {} (type: {}, spell: {})", 
+            qteEvent.getEventId(), qteEvent.getQTEType(), qteEvent.getSpellName());
+        
+        if (currentOSUQTE == null) {
+            currentOSUQTE = qteEvent;
+        }
+        
+        // Проигрываем звук начала QTE
+        soundManager.playQTEStart();
+    }
+    
+    @Override
+    public void onOSUQTECompleted(OSUStyleQTEEvent qteEvent) {
+        var result = qteEvent.getFinalResult();
+        LOGGER.debug("OSU QTE completed: {} - Overall efficiency: {:.1f}%, Success: {}", 
+            qteEvent.getEventId(), result.getOverallEfficiency() * 100, result.isSuccess());
+        
+        if (currentOSUQTE != null && currentOSUQTE.getEventId().equals(qteEvent.getEventId())) {
+            currentOSUQTE = null;
+        }
+        
+        // Проигрываем звук завершения
+        if (result.isSuccess()) {
+            soundManager.playQTEComboSuccess();
+        } else {
+            soundManager.playQTEComboFailed();
+        }
+        
+        // TODO: SINGLEPLAYER - применяем результат к ресурсам игрока локально
+        // applyQTEResultToResources(qteEvent, result);
+    }
+    
+    @Override
+    public void onOSUQTECancelled(OSUStyleQTEEvent qteEvent) {
+        LOGGER.debug("OSU QTE cancelled: {}", qteEvent.getEventId());
+        
+        if (currentOSUQTE != null && currentOSUQTE.getEventId().equals(qteEvent.getEventId())) {
+            currentOSUQTE = null;
+        }
+    }
+    
+    // === UTILITY METHODS ===
+    
+    /**
+     * Получает текущее активное OSU QTE
+     */
+    public OSUStyleQTEEvent getCurrentOSUQTE() {
+        return currentOSUQTE;
+    }
+    
+    /**
+     * Проверяет, активно ли OSU QTE
+     */
+    public boolean hasActiveOSUQTE() {
+        return currentOSUQTE != null && currentOSUQTE.isActive();
+    }
+    
+    /**
+     * Запускает тестовое OSU QTE (для debug команд)
+     */
+    public UUID startTestOSUQTE(OSUStyleQTEEvent.QTEType type, String spellName) {
+        return qteManager.startOSUStyleQTE(type, spellName);
     }
 }

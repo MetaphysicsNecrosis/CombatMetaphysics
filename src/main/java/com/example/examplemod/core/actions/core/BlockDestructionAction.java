@@ -8,9 +8,16 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.ChunkPos;
 
-import java.util.List;
-import java.util.ArrayList;
+import java.util.*;
+import java.util.stream.Collectors;
+import java.util.function.Function;
 
 /**
  * Core Action: Разрушение блоков
@@ -23,7 +30,7 @@ public class BlockDestructionAction extends CoreActionExecutor {
     
     @Override
     protected ExecutionResult executeCore(ActionContext context) {
-        CombatMetaphysics.LOGGER.info("BlockDestructionAction: Starting execution");
+        CombatMetaphysics.LOGGER.info("BlockDestructionAction: Starting optimized execution");
         
         Float power = context.getEvent().getFloatParameter("power");
         if (power == null || power <= 0) {
@@ -31,44 +38,84 @@ public class BlockDestructionAction extends CoreActionExecutor {
             return ExecutionResult.failure("Missing or invalid power parameter");
         }
         
-        CombatMetaphysics.LOGGER.info("BlockDestructionAction: Using power {}", power);
-        
         // Получаем список блоков для разрушения из предыдущих шагов
         @SuppressWarnings("unchecked")
         List<BlockPos> targetBlocks = context.getPipelineData("scannedBlocks", List.class);
-        
-        CombatMetaphysics.LOGGER.info("BlockDestructionAction: Found {} target blocks", 
-            targetBlocks != null ? targetBlocks.size() : 0);
         
         if (targetBlocks == null || targetBlocks.isEmpty()) {
             CombatMetaphysics.LOGGER.error("BlockDestructionAction: No blocks found for destruction");
             return ExecutionResult.failure("No blocks found for destruction");
         }
         
+        CombatMetaphysics.LOGGER.info("BlockDestructionAction: Processing {} blocks with FAWE-style optimization", targetBlocks.size());
+        
         Level world = context.getWorld();
+        
+        // 1. Группировка по чанкам (FAWE pattern)
+        Map<ChunkPos, List<BlockPos>> chunkGroups = targetBlocks.stream()
+            .collect(Collectors.groupingBy(pos -> new ChunkPos(pos)));
+        
+        // 2. Предварительная загрузка всех чанков
+        Map<ChunkPos, LevelChunk> loadedChunks = chunkGroups.keySet().stream()
+            .collect(Collectors.toMap(
+                Function.identity(),
+                pos -> world.getChunk(pos.x, pos.z)
+            ));
+        
+        // 3. Batch проверка защиты (один проход)
+        BitSet protectedMask = new BitSet(targetBlocks.size());
+        BlockState[] states = new BlockState[targetBlocks.size()];
+        
+        for (int i = 0; i < targetBlocks.size(); i++) {
+            BlockPos pos = targetBlocks.get(i);
+            ChunkPos chunkPos = new ChunkPos(pos);
+            LevelChunk chunk = loadedChunks.get(chunkPos);
+            
+            states[i] = chunk.getBlockState(pos);
+            if (isBlockProtected(states[i], power, context)) {
+                protectedMask.set(i);
+            }
+        }
+        
+        // 4. Массовое удаление через direct chunk access
+        List<ItemEntity> allDrops = new ArrayList<>();
         List<BlockPos> destroyedBlocks = new ArrayList<>();
         List<BlockPos> protectedBlocks = new ArrayList<>();
         
-        for (BlockPos pos : targetBlocks) {
-            BlockState blockState = world.getBlockState(pos);
-            CombatMetaphysics.LOGGER.info("BlockDestructionAction: Processing block at {} - {}", 
-                pos, blockState.getBlock().getName().getString());
+        chunkGroups.forEach((chunkPos, positions) -> {
+            LevelChunk chunk = loadedChunks.get(chunkPos);
             
-            // Проверяем защищенность блока
-            if (isBlockProtected(blockState, power, context)) {
-                CombatMetaphysics.LOGGER.info("BlockDestructionAction: Block at {} is protected", pos);
-                protectedBlocks.add(pos);
-                continue;
+            for (BlockPos pos : positions) {
+                int idx = targetBlocks.indexOf(pos);
+                if (protectedMask.get(idx)) {
+                    protectedBlocks.add(pos);
+                    continue;
+                }
+                
+                BlockState state = states[idx];
+                
+                // Собираем дропы но НЕ спавним еще
+                if (!state.isAir()) {
+                    List<ItemStack> drops = Block.getDrops(state, world, pos, null);
+                    drops.forEach(stack -> {
+                        ItemEntity entity = new ItemEntity(world, pos.getX(), pos.getY(), pos.getZ(), stack);
+                        allDrops.add(entity);
+                    });
+                }
+                
+                // Прямая установка AIR через destroyBlock (сохраняет корректность)
+                if (world.destroyBlock(pos, false)) { // false = не дропать, мы сами соберем
+                    destroyedBlocks.add(pos);
+                }
             }
             
-            // Разрушаем блок
-            CombatMetaphysics.LOGGER.info("BlockDestructionAction: Attempting to destroy block at {}", pos);
-            if (world.destroyBlock(pos, true)) {
-                CombatMetaphysics.LOGGER.info("BlockDestructionAction: Successfully destroyed block at {}", pos);
-                destroyedBlocks.add(pos);
-            } else {
-                CombatMetaphysics.LOGGER.warn("BlockDestructionAction: Failed to destroy block at {}", pos);
-            }
+            // Помечаем чанк как измененный
+            chunk.setUnsaved(true);
+        });
+        
+        // 5. Batch spawn дропов
+        if (!allDrops.isEmpty()) {
+            allDrops.forEach(world::addFreshEntity);
         }
         
         // Сохраняем результаты
@@ -83,6 +130,9 @@ public class BlockDestructionAction extends CoreActionExecutor {
                 protectedBlocks,
                 power
         );
+        
+        CombatMetaphysics.LOGGER.info("BlockDestructionAction: Optimized execution complete - {} destroyed, {} protected", 
+            destroyedBlocks.size(), protectedBlocks.size());
         
         return ExecutionResult.success(result);
     }

@@ -3,6 +3,7 @@ package com.example.examplemod.core.actions.core;
 import com.example.examplemod.core.actions.CoreActionExecutor;
 import com.example.examplemod.core.pipeline.ActionContext;
 import com.example.examplemod.core.pipeline.ExecutionResult;
+import com.example.examplemod.CombatMetaphysics;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
@@ -33,59 +34,55 @@ public class ParticleEffectAction extends CoreActionExecutor {
         float scale = getFloatParameter(context, "scale", 1.0f);
         int duration = getIntParameter(context, "duration", 1000);
         
-        // Создаем частицы в зависимости от типа эффекта
-        int particleCount = (int)(50 * scale);
+        // Создаем частицы в зависимости от типа эффекта (ОПТИМИЗИРОВАНО)
+        // Ограничиваем количество частиц для предотвращения лагов
+        int baseParticleCount = Math.min((int)(20 * scale), 100); // Макс 100 частиц
         double spread = 2.0 * scale;
         
         switch (effectType) {
             case "meteor_warning" -> {
-                // Красные частицы предупреждения
-                for (int i = 0; i < particleCount; i++) {
-                    double offsetX = (world.random.nextDouble() - 0.5) * spread;
-                    double offsetY = world.random.nextDouble() * spread * 0.5;
-                    double offsetZ = (world.random.nextDouble() - 0.5) * spread;
-                    
-                    serverWorld.sendParticles(ParticleTypes.FLAME, 
-                            position.x + offsetX, position.y + offsetY, position.z + offsetZ,
-                            1, 0, 0.1, 0, 0.1);
-                }
+                // Красные частицы предупреждения (BATCH отправка)
+                serverWorld.sendParticles(ParticleTypes.FLAME, 
+                        position.x, position.y, position.z,
+                        baseParticleCount, // Отправляем все сразу 
+                        spread * 0.5, spread * 0.25, spread * 0.5, // spread X,Y,Z
+                        0.1); // speed
             }
             case "meteor_explosion" -> {
-                // Взрывные частицы
-                for (int i = 0; i < particleCount * 2; i++) {
-                    double offsetX = (world.random.nextDouble() - 0.5) * spread * 2;
-                    double offsetY = world.random.nextDouble() * spread;
-                    double offsetZ = (world.random.nextDouble() - 0.5) * spread * 2;
-                    
-                    serverWorld.sendParticles(ParticleTypes.EXPLOSION, 
-                            position.x + offsetX, position.y + offsetY, position.z + offsetZ,
-                            1, offsetX * 0.1, 0.2, offsetZ * 0.1, 0.1);
-                    
-                    serverWorld.sendParticles(ParticleTypes.LAVA, 
-                            position.x + offsetX, position.y + offsetY, position.z + offsetZ,
-                            1, offsetX * 0.05, 0.1, offsetZ * 0.05, 0.05);
-                }
+                // Взрывные частицы (BATCH отправка для оптимизации)
+                int explosionParticles = Math.min(baseParticleCount, 50); // Ещё больше ограничиваем
+                
+                // Explosion particles
+                serverWorld.sendParticles(ParticleTypes.EXPLOSION, 
+                        position.x, position.y, position.z,
+                        explosionParticles,
+                        spread, spread * 0.5, spread,
+                        0.2);
+                
+                // Lava particles (меньше)
+                serverWorld.sendParticles(ParticleTypes.LAVA, 
+                        position.x, position.y, position.z,
+                        explosionParticles / 2, // Вдвое меньше лавы
+                        spread * 0.8, spread * 0.3, spread * 0.8,
+                        0.1);
             }
             default -> {
-                // Базовые частицы
-                for (int i = 0; i < particleCount; i++) {
-                    double offsetX = (world.random.nextDouble() - 0.5) * spread;
-                    double offsetY = world.random.nextDouble() * spread * 0.5;
-                    double offsetZ = (world.random.nextDouble() - 0.5) * spread;
-                    
-                    serverWorld.sendParticles(ParticleTypes.FIREWORK, 
-                            position.x + offsetX, position.y + offsetY, position.z + offsetZ,
-                            1, 0, 0.1, 0, 0.1);
-                }
+                // Базовые частицы (BATCH отправка)
+                serverWorld.sendParticles(ParticleTypes.FIREWORK, 
+                        position.x, position.y, position.z,
+                        baseParticleCount,
+                        spread * 0.5, spread * 0.25, spread * 0.5,
+                        0.1);
             }
         }
         
         // Сохраняем информацию об эффекте
         context.setPipelineData("particleEffectType", effectType);
-        context.setPipelineData("particleCount", particleCount);
+        context.setPipelineData("particleCount", baseParticleCount);
         context.setPipelineData("particlePosition", position);
         
-        return ExecutionResult.success(new ParticleEffectResult(effectType, particleCount, position, scale));
+        CombatMetaphysics.LOGGER.debug("Created {} {} particles at {}", baseParticleCount, effectType, position);
+        return ExecutionResult.success(new ParticleEffectResult(effectType, baseParticleCount, position, scale));
     }
     
     private Vec3 getEffectPosition(ActionContext context) {

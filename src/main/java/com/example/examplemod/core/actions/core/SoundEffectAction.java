@@ -3,15 +3,25 @@ package com.example.examplemod.core.actions.core;
 import com.example.examplemod.core.actions.CoreActionExecutor;
 import com.example.examplemod.core.pipeline.ActionContext;
 import com.example.examplemod.core.pipeline.ExecutionResult;
+import com.example.examplemod.CombatMetaphysics;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
- * Core Action: Воспроизведение звуковых эффектов
+ * Core Action: Воспроизведение звуковых эффектов с anti-spam защитой
  */
 public class SoundEffectAction extends CoreActionExecutor {
+    
+    // Anti-spam система: последний раз когда играл каждый звук
+    private static final Map<String, Long> SOUND_COOLDOWNS = new ConcurrentHashMap<>();
+    
+    // Минимальный интервал между одинаковыми звуками (мс)
+    private static final long MIN_SOUND_INTERVAL = 500L; // 0.5 секунды
     
     public SoundEffectAction() {
         super("sound_effect");
@@ -24,10 +34,21 @@ public class SoundEffectAction extends CoreActionExecutor {
             return ExecutionResult.failure("Missing soundId parameter");
         }
         
+        // Anti-spam проверка
+        long currentTime = System.currentTimeMillis();
+        Long lastPlayed = SOUND_COOLDOWNS.get(soundId);
+        if (lastPlayed != null && (currentTime - lastPlayed) < MIN_SOUND_INTERVAL) {
+            CombatMetaphysics.LOGGER.debug("Sound {} skipped due to cooldown", soundId);
+            return ExecutionResult.success(new SoundEffectResult(soundId, null, 0f, 0f)); // "Silent" success
+        }
+        
         Level world = context.getWorld();
         Vec3 position = getSoundPosition(context);
         float volume = getFloatParameter(context, "volume", 1.0f);
         float pitch = getFloatParameter(context, "pitch", 1.0f);
+        
+        // Ограничиваем громкость для предотвращения audio overload
+        volume = Math.min(volume, 2.0f);
         
         // Воспроизводим звук в зависимости от типа
         switch (soundId) {
@@ -64,12 +85,22 @@ public class SoundEffectAction extends CoreActionExecutor {
             }
         }
         
+        // Записываем время воспроизведения для anti-spam
+        SOUND_COOLDOWNS.put(soundId, currentTime);
+        
+        // Очищаем старые записи (предотвращаем memory leak)
+        if (SOUND_COOLDOWNS.size() > 100) {
+            long cutoff = currentTime - MIN_SOUND_INTERVAL * 10;
+            SOUND_COOLDOWNS.entrySet().removeIf(entry -> entry.getValue() < cutoff);
+        }
+        
         // Сохраняем информацию о звуке
         context.setPipelineData("soundId", soundId);
         context.setPipelineData("soundPosition", position);
         context.setPipelineData("soundVolume", volume);
         context.setPipelineData("soundPitch", pitch);
         
+        CombatMetaphysics.LOGGER.debug("Played sound {} at volume {} pitch {}", soundId, volume, pitch);
         return ExecutionResult.success(new SoundEffectResult(soundId, position, volume, pitch));
     }
     

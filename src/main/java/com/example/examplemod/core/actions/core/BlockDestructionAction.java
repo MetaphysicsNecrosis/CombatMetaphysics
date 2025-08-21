@@ -4,15 +4,16 @@ import com.example.examplemod.core.actions.CoreActionExecutor;
 import com.example.examplemod.core.pipeline.ActionContext;
 import com.example.examplemod.core.pipeline.ExecutionResult;
 import com.example.examplemod.CombatMetaphysics;
+import com.example.examplemod.util.BlockChangeBuffer;
+import com.example.examplemod.util.WorldEditStyleBlockBuffer;
+import com.example.examplemod.util.CombatSideEffects;
+import com.example.examplemod.util.TickBasedBlockProcessor;
+import com.example.examplemod.util.BlockProtectionRegistry;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
-import net.minecraft.world.level.chunk.LevelChunkSection;
-import net.minecraft.world.entity.item.ItemEntity;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.ChunkPos;
 
 import java.util.*;
@@ -30,7 +31,7 @@ public class BlockDestructionAction extends CoreActionExecutor {
     
     @Override
     protected ExecutionResult executeCore(ActionContext context) {
-        CombatMetaphysics.LOGGER.info("BlockDestructionAction: Starting optimized execution");
+        CombatMetaphysics.LOGGER.info("BlockDestructionAction: Starting WorldEdit-style mass destruction");
         
         Float power = context.getEvent().getFloatParameter("power");
         if (power == null || power <= 0) {
@@ -47,115 +48,214 @@ public class BlockDestructionAction extends CoreActionExecutor {
             return ExecutionResult.failure("No blocks found for destruction");
         }
         
-        CombatMetaphysics.LOGGER.info("BlockDestructionAction: Processing {} blocks with FAWE-style optimization", targetBlocks.size());
+        CombatMetaphysics.LOGGER.info("BlockDestructionAction: Processing {} blocks with WorldEdit-style architecture", targetBlocks.size());
         
         Level world = context.getWorld();
         
-        // 1. Группировка по чанкам (FAWE pattern)
+        // ОПРЕДЕЛЯЕМ СТРАТЕГИЮ в зависимости от количества блоков
+        if (targetBlocks.size() >= 1000) {
+            // НОВАЯ СТРАТЕГИЯ: Tick-based processing для очень больших операций
+            return executeTickBasedDestruction(targetBlocks, power, context, world);
+        } else if (targetBlocks.size() >= 50) {
+            // WorldEdit-style для средних операций (50-999 блоков)  
+            return executeMassDestruction(targetBlocks, power, context, world);
+        } else {
+            // Обычное разрушение для небольшого количества (<50 блоков)
+            return executeNormalDestruction(targetBlocks, power, context, world);
+        }
+    }
+    
+    /**
+     * НОВЕЙШИЙ МЕТОД: Tick-based processing для очень больших операций (1000+ блоков)
+     * Использует GPT рекомендации: Queue + ServerTickEvent + BATCH_SIZE за тик
+     */
+    private ExecutionResult executeTickBasedDestruction(List<BlockPos> targetBlocks, Float power, 
+                                                      ActionContext context, Level world) {
+        CombatMetaphysics.LOGGER.info("Using tick-based destruction for {} blocks (large operation)", targetBlocks.size());
+        
+        // Фильтруем защищённые блоки
+        List<BlockPos> protectedBlocks = new ArrayList<>();
+        List<BlockPos> destroyableBlocks = new ArrayList<>();
+        
+        for (BlockPos pos : targetBlocks) {
+            BlockState currentState = world.getBlockState(pos);
+            
+            if (isBlockProtected(currentState, power, context)) {
+                protectedBlocks.add(pos);
+            } else if (!currentState.isAir()) {
+                destroyableBlocks.add(pos);
+            }
+        }
+        
+        CombatMetaphysics.LOGGER.info("Tick-based queue: {} destroyable blocks, {} protected", 
+            destroyableBlocks.size(), protectedBlocks.size());
+        
+        // Получаем эпицентр заклинания для кастомных дропов
+        BlockPos spellCenter = context.getEvent().getBlockPosParameter("center");
+        if (spellCenter == null) {
+            // Fallback: берём позицию игрока или первый блок
+            spellCenter = destroyableBlocks.isEmpty() ? BlockPos.ZERO : destroyableBlocks.get(0);
+        }
+        
+        // Запускаем tick-based обработку с кастомными дропами
+        TickBasedBlockProcessor processor = TickBasedBlockProcessor.getInstance();
+        processor.queueMassDestructionWithSpellCenter(world, destroyableBlocks, true, false, spellCenter);
+        
+        // Сохраняем результаты (приблизительные, так как обработка асинхронная)
+        context.setPipelineData("destroyedBlocks", destroyableBlocks);
+        context.setPipelineData("protectedBlocks", protectedBlocks);
+        context.setPipelineData("destructionPower", power);
+        
+        BlockDestructionResult result = new BlockDestructionResult(
+            destroyableBlocks.size(), // Приблизительное количество (будет обработано асинхронно)
+            protectedBlocks.size(),
+            destroyableBlocks,
+            protectedBlocks,
+            power
+        );
+        
+        CombatMetaphysics.LOGGER.info("Tick-based destruction queued: {} blocks will be processed over time", 
+            destroyableBlocks.size());
+        
+        return ExecutionResult.success(result);
+    }
+    
+    /**
+     * WorldEdit-style массовое разрушение для средних операций (50-999 блоков)
+     */
+    private ExecutionResult executeMassDestruction(List<BlockPos> targetBlocks, Float power, 
+                                                 ActionContext context, Level world) {
+        CombatMetaphysics.LOGGER.info("Using WorldEdit-style mass destruction for {} blocks", targetBlocks.size());
+        
+        // Конфигурируем side effects для максимальной производительности
+        CombatSideEffects sideEffects = CombatSideEffects.Presets.VISUAL_ONLY
+            .with(CombatSideEffects.SPAWN_DROPS); // Дропы нужны для gameplay
+        
+        // Создаём WorldEdit-style buffer
+        WorldEditStyleBlockBuffer buffer = new WorldEditStyleBlockBuffer(world, sideEffects);
+        
+        // Предварительная загрузка чанков и проверка защиты
         Map<ChunkPos, List<BlockPos>> chunkGroups = targetBlocks.stream()
             .collect(Collectors.groupingBy(pos -> new ChunkPos(pos)));
         
-        // 2. Предварительная загрузка всех чанков
         Map<ChunkPos, LevelChunk> loadedChunks = chunkGroups.keySet().stream()
             .collect(Collectors.toMap(
                 Function.identity(),
                 pos -> world.getChunk(pos.x, pos.z)
             ));
         
-        // 3. Batch проверка защиты (один проход)
-        BitSet protectedMask = new BitSet(targetBlocks.size());
-        BlockState[] states = new BlockState[targetBlocks.size()];
+        List<BlockPos> protectedBlocks = new ArrayList<>();
+        int queuedForDestruction = 0;
         
-        for (int i = 0; i < targetBlocks.size(); i++) {
-            BlockPos pos = targetBlocks.get(i);
+        for (BlockPos pos : targetBlocks) {
             ChunkPos chunkPos = new ChunkPos(pos);
             LevelChunk chunk = loadedChunks.get(chunkPos);
+            BlockState currentState = chunk.getBlockState(pos);
             
-            states[i] = chunk.getBlockState(pos);
-            if (isBlockProtected(states[i], power, context)) {
-                protectedMask.set(i);
+            if (isBlockProtected(currentState, power, context)) {
+                protectedBlocks.add(pos);
+                continue;
+            }
+            
+            if (!currentState.isAir()) {
+                // WorldEdit-style queueing - НЕ применяем сразу
+                buffer.queueBlockDestruction(pos, currentState);
+                queuedForDestruction++;
             }
         }
         
-        // 4. Массовое удаление через direct chunk access
-        List<ItemEntity> allDrops = new ArrayList<>();
-        List<BlockPos> destroyedBlocks = new ArrayList<>();
-        List<BlockPos> protectedBlocks = new ArrayList<>();
+        CombatMetaphysics.LOGGER.info("WorldEdit buffer: queued {} blocks, {} protected", 
+            queuedForDestruction, protectedBlocks.size());
         
-        chunkGroups.forEach((chunkPos, positions) -> {
-            LevelChunk chunk = loadedChunks.get(chunkPos);
-            
-            for (BlockPos pos : positions) {
-                int idx = targetBlocks.indexOf(pos);
-                if (protectedMask.get(idx)) {
-                    protectedBlocks.add(pos);
-                    continue;
-                }
-                
-                BlockState state = states[idx];
-                
-                // Собираем дропы но НЕ спавним еще
-                if (!state.isAir()) {
-                    List<ItemStack> drops = Block.getDrops(state, world, pos, null);
-                    drops.forEach(stack -> {
-                        ItemEntity entity = new ItemEntity(world, pos.getX(), pos.getY(), pos.getZ(), stack);
-                        allDrops.add(entity);
-                    });
-                }
-                
-                // Прямая установка AIR через destroyBlock (сохраняет корректность)
-                if (world.destroyBlock(pos, false)) { // false = не дропать, мы сами соберем
-                    destroyedBlocks.add(pos);
-                }
-            }
-            
-            // Помечаем чанк как измененный
-            chunk.setUnsaved(true);
-        });
-        
-        // 5. Batch spawn дропов
-        if (!allDrops.isEmpty()) {
-            allDrops.forEach(world::addFreshEntity);
-        }
+        // FLUSH - WorldEdit-style массовое применение
+        WorldEditStyleBlockBuffer.FlushResult flushResult = buffer.flush();
         
         // Сохраняем результаты
+        List<BlockPos> destroyedBlocks = targetBlocks.stream()
+            .filter(pos -> !protectedBlocks.contains(pos))
+            .toList();
+            
         context.setPipelineData("destroyedBlocks", destroyedBlocks);
         context.setPipelineData("protectedBlocks", protectedBlocks);
         context.setPipelineData("destructionPower", power);
         
         BlockDestructionResult result = new BlockDestructionResult(
-                destroyedBlocks.size(),
-                protectedBlocks.size(),
-                destroyedBlocks,
-                protectedBlocks,
-                power
+            flushResult.blocksDestroyed(),
+            protectedBlocks.size(),
+            destroyedBlocks,
+            protectedBlocks,
+            power
         );
         
-        CombatMetaphysics.LOGGER.info("BlockDestructionAction: Optimized execution complete - {} destroyed, {} protected", 
-            destroyedBlocks.size(), protectedBlocks.size());
+        CombatMetaphysics.LOGGER.info("WorldEdit-style destruction complete: {} destroyed, {} protected, {} chunks", 
+            flushResult.blocksDestroyed(), protectedBlocks.size(), flushResult.chunksModified());
+        
+        return ExecutionResult.success(result);
+    }
+    
+    /**
+     * FALLBACK: Обычное разрушение для небольшого количества блоков (<10)
+     */
+    private ExecutionResult executeNormalDestruction(List<BlockPos> targetBlocks, Float power, 
+                                                   ActionContext context, Level world) {
+        CombatMetaphysics.LOGGER.info("Using normal destruction for {} blocks", targetBlocks.size());
+        
+        // Для небольшого количества блоков используем старый buffer (он работает нормально)
+        BlockChangeBuffer buffer = new BlockChangeBuffer(world);
+        
+        List<BlockPos> protectedBlocks = new ArrayList<>();
+        int queuedForDestruction = 0;
+        
+        for (BlockPos pos : targetBlocks) {
+            BlockState currentState = world.getBlockState(pos);
+            
+            if (isBlockProtected(currentState, power, context)) {
+                protectedBlocks.add(pos);
+                continue;
+            }
+            
+            if (!currentState.isAir()) {
+                buffer.queueBlockDestruction(pos, currentState);
+                queuedForDestruction++;
+            }
+        }
+        
+        BlockChangeBuffer.FlushResult flushResult = buffer.flush();
+        
+        List<BlockPos> destroyedBlocks = targetBlocks.stream()
+            .filter(pos -> !protectedBlocks.contains(pos))
+            .toList();
+            
+        context.setPipelineData("destroyedBlocks", destroyedBlocks);
+        context.setPipelineData("protectedBlocks", protectedBlocks);
+        context.setPipelineData("destructionPower", power);
+        
+        BlockDestructionResult result = new BlockDestructionResult(
+            flushResult.blocksDestroyed(),
+            protectedBlocks.size(),
+            destroyedBlocks,
+            protectedBlocks,
+            power
+        );
         
         return ExecutionResult.success(result);
     }
     
     /**
      * Проверяет, защищен ли блок от разрушения
+     * ОБНОВЛЕНО: Использует новую систему BlockProtectionRegistry
      */
     private boolean isBlockProtected(BlockState blockState, float power, ActionContext context) {
-        // Неразрушимые блоки
-        if (blockState.is(Blocks.BEDROCK) || blockState.is(Blocks.BARRIER)) {
-            return true;
+        boolean isProtected = BlockProtectionRegistry.isBlockProtected(blockState, power);
+        
+        // Логируем защищённые блоки для отладки
+        if (isProtected) {
+            String reason = BlockProtectionRegistry.getProtectionReason(blockState, power);
+            CombatMetaphysics.LOGGER.debug("Block protected: {} - Reason: {}", 
+                blockState.getBlock().getDescriptionId(), reason);
         }
         
-        // Проверяем прочность блока
-        float hardness = blockState.getDestroySpeed(context.getWorld(), BlockPos.ZERO);
-        
-        // Нерушимые блоки (hardness < 0)
-        if (hardness < 0) {
-            return true;
-        }
-        
-        // Проверяем, хватает ли силы для разрушения
-        return power < hardness;
+        return isProtected;
     }
     
     /**

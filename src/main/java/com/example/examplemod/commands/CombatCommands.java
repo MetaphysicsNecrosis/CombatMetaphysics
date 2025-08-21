@@ -6,14 +6,20 @@ import com.example.examplemod.client.qte.QTEClientManager;
 import com.example.examplemod.client.qte.OSUStyleQTEEvent;
 import com.example.examplemod.client.CombatHUDRenderer;
 import com.example.examplemod.commands.TestMeteorStrikeCommand;
+import com.example.examplemod.util.BlockProtectionRegistry;
 // Старые импорты удалены - используем новую Event-Driven систему
-import com.example.examplemod.server.CombatServerManager;
+// SINGLEPLAYER: Removed server imports
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.BoolArgumentType;
+import com.mojang.brigadier.arguments.FloatArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.ChunkPos;
 
 import java.util.Arrays;
 import java.util.List;
@@ -122,6 +128,44 @@ public class CombatCommands {
                     )
                 )
             )
+            .then(Commands.literal("reload")
+                .then(Commands.literal("spells")
+                    .executes(CombatCommands::reloadSpells)
+                )
+            )
+            .then(Commands.literal("recalc")
+                .then(Commands.literal("light")
+                    .executes(CombatCommands::recalculateLight)
+                )
+                .then(Commands.literal("physics")
+                    .executes(CombatCommands::updatePhysics)
+                )
+            )
+            .then(Commands.literal("protection")
+                .then(Commands.literal("status")
+                    .executes(CombatCommands::showProtectionStatus)
+                )
+                .then(Commands.literal("valuable")
+                    .then(Commands.argument("enabled", BoolArgumentType.bool())
+                        .executes(CombatCommands::setProtectValuable)
+                    )
+                )
+                .then(Commands.literal("reinforced")
+                    .then(Commands.argument("enabled", BoolArgumentType.bool())
+                        .executes(CombatCommands::setProtectReinforced)
+                    )
+                )
+                .then(Commands.literal("infrastructure")
+                    .then(Commands.argument("enabled", BoolArgumentType.bool())
+                        .executes(CombatCommands::setProtectInfrastructure)
+                    )
+                )
+                .then(Commands.literal("threshold")
+                    .then(Commands.argument("power", FloatArgumentType.floatArg(1.0f, 100.0f))
+                        .executes(CombatCommands::setReinforcedThreshold)
+                    )
+                )
+            )
         );
     }
     
@@ -131,8 +175,8 @@ public class CombatCommands {
                 var player = context.getSource().getPlayerOrException();
                 UUID playerId = player.getUUID();
                 
-                // Используем серверный менеджер
-                CombatServerManager.getInstance().debugPrintState(playerId);
+                // SINGLEPLAYER: Debug локального состояния
+                CombatMetaphysics.LOGGER.info("DEBUG STATE for player {}: SINGLEPLAYER mode", playerId);
                 
                 context.getSource().sendSuccess(() -> 
                     Component.literal("Debug info printed to console"), false);
@@ -149,8 +193,8 @@ public class CombatCommands {
                 var player = context.getSource().getPlayerOrException();
                 UUID playerId = player.getUUID();
                 
-                // Используем серверный менеджер для сохранения состояния
-                var resources = CombatServerManager.getInstance().getPlayerResources(playerId);
+                // SINGLEPLAYER: Используем локальные ресурсы из HUD
+                var resources = CombatHUDRenderer.getTestResourceManager();
                 
                 context.getSource().sendSuccess(() -> Component.literal(
                     String.format("Mana: %.1f/%.1f (reserved: %.1f), Stamina: %.1f/%.1f",
@@ -204,8 +248,8 @@ public class CombatCommands {
                 int amount = IntegerArgumentType.getInteger(context, "amount");
                 UUID playerId = player.getUUID();
                 
-                // Используем серверный менеджер для сохранения состояния
-                var resources = CombatServerManager.getInstance().getPlayerResources(playerId);
+                // SINGLEPLAYER: Используем локальные ресурсы из HUD
+                var resources = CombatHUDRenderer.getTestResourceManager();
                 boolean success = resources.tryReserveMana(amount, "test command");
                 
                 context.getSource().sendSuccess(() -> Component.literal(
@@ -231,8 +275,8 @@ public class CombatCommands {
                 // Сбрасываем тестовые ресурсы для обновления
                 CombatHUDRenderer.resetTestResources();
                 
-                // Принудительно синхронизируем с серверными данными
-                CombatHUDRenderer.syncWithServerData(playerId);
+                // SINGLEPLAYER: Синхронизируем локальные данные
+                CombatHUDRenderer.syncLocalData(playerId);
                 
                 context.getSource().sendSuccess(() -> 
                     Component.literal("HUD refreshed! Resource bars should update with current values."), false);
@@ -335,6 +379,258 @@ public class CombatCommands {
         } catch (Exception e) {
             context.getSource().sendFailure(Component.literal("OSU QTE Error: " + e.getMessage()));
             CombatMetaphysics.LOGGER.error("Failed to start OSU QTE test", e);
+        }
+        return 1;
+    }
+    
+    /**
+     * Принудительное пересчёт освещения (рекомендация от Gemini)
+     */
+    private static int recalculateLight(CommandContext<CommandSourceStack> context) {
+        try {
+            if (context.getSource().isPlayer()) {
+                var player = context.getSource().getPlayerOrException();
+                
+                if (context.getSource().getLevel() instanceof ServerLevel serverLevel) {
+                    BlockPos playerPos = player.blockPosition();
+                    int radius = 5; // Пересчёт в радиусе 5 чанков
+                    
+                    int recalculatedChunks = 0;
+                    long startTime = System.currentTimeMillis();
+                    
+                    for (int x = -radius; x <= radius; x++) {
+                        for (int z = -radius; z <= radius; z++) {
+                            ChunkPos chunkPos = new ChunkPos(
+                                (playerPos.getX() >> 4) + x,
+                                (playerPos.getZ() >> 4) + z
+                            );
+                            
+                            try {
+                                // Принудительное обновление освещения по чанку
+                                serverLevel.getChunkSource().getLightEngine().checkBlock(
+                                    chunkPos.getWorldPosition()
+                                );
+                                recalculatedChunks++;
+                            } catch (Exception e) {
+                                CombatMetaphysics.LOGGER.warn("Failed to recalculate light for chunk {}: {}", 
+                                    chunkPos, e.getMessage());
+                            }
+                        }
+                    }
+                    
+                    long duration = System.currentTimeMillis() - startTime;
+                    
+                    // Делаем переменные effectively final для lambda
+                    final int finalRecalculatedChunks = recalculatedChunks;
+                    final long finalDuration = duration;
+                    final int finalRadius = radius;
+                    
+                    context.getSource().sendSuccess(() -> Component.literal(
+                        String.format("Light recalculated for %d chunks in %dms (radius: %d)", 
+                            finalRecalculatedChunks, finalDuration, finalRadius)
+                    ), false);
+                    
+                    CombatMetaphysics.LOGGER.info("Light recalculation completed: {} chunks in {}ms", 
+                        finalRecalculatedChunks, finalDuration);
+                } else {
+                    context.getSource().sendFailure(Component.literal("Light recalculation only available on server!"));
+                }
+            }
+        } catch (Exception e) {
+            context.getSource().sendFailure(Component.literal("Light recalc error: " + e.getMessage()));
+            CombatMetaphysics.LOGGER.error("Failed to recalculate light", e);
+        }
+        return 1;
+    }
+    
+    /**
+     * Принудительное обновление физики (рекомендация от Gemini)
+     */
+    private static int updatePhysics(CommandContext<CommandSourceStack> context) {
+        try {
+            if (context.getSource().isPlayer()) {
+                var player = context.getSource().getPlayerOrException();
+                
+                if (context.getSource().getLevel() instanceof ServerLevel serverLevel) {
+                    BlockPos playerPos = player.blockPosition();
+                    int radius = 3; // Обновление физики в радиусе 3 чанков
+                    
+                    int updatedChunks = 0;
+                    long startTime = System.currentTimeMillis();
+                    
+                    for (int x = -radius; x <= radius; x++) {
+                        for (int z = -radius; z <= radius; z++) {
+                            ChunkPos chunkPos = new ChunkPos(
+                                (playerPos.getX() >> 4) + x,
+                                (playerPos.getZ() >> 4) + z
+                            );
+                            
+                            try {
+                                var chunk = serverLevel.getChunk(chunkPos.x, chunkPos.z);
+                                
+                                // Помечаем чанк для обновления физики и рендера
+                                chunk.markUnsaved();
+                                
+                                // Принудительно обновляем соседние чанки
+                                for (int dx = -1; dx <= 1; dx++) {
+                                    for (int dz = -1; dz <= 1; dz++) {
+                                        if (dx == 0 && dz == 0) continue;
+                                        try {
+                                            var neighborChunk = serverLevel.getChunk(chunkPos.x + dx, chunkPos.z + dz);
+                                            neighborChunk.markUnsaved();
+                                        } catch (Exception ignored) {
+                                            // Игнорируем ошибки соседних чанков
+                                        }
+                                    }
+                                }
+                                
+                                updatedChunks++;
+                            } catch (Exception e) {
+                                CombatMetaphysics.LOGGER.warn("Failed to update physics for chunk {}: {}", 
+                                    chunkPos, e.getMessage());
+                            }
+                        }
+                    }
+                    
+                    long duration = System.currentTimeMillis() - startTime;
+                    
+                    // Делаем переменные effectively final для lambda
+                    final int finalUpdatedChunks = updatedChunks;
+                    final long finalDuration = duration;
+                    final int finalRadius = radius;
+                    
+                    context.getSource().sendSuccess(() -> Component.literal(
+                        String.format("Physics updated for %d chunks in %dms (radius: %d)", 
+                            finalUpdatedChunks, finalDuration, finalRadius)
+                    ), false);
+                    
+                    CombatMetaphysics.LOGGER.info("Physics update completed: {} chunks in {}ms", 
+                        finalUpdatedChunks, finalDuration);
+                } else {
+                    context.getSource().sendFailure(Component.literal("Physics update only available on server!"));
+                }
+            }
+        } catch (Exception e) {
+            context.getSource().sendFailure(Component.literal("Physics update error: " + e.getMessage()));
+            CombatMetaphysics.LOGGER.error("Failed to update physics", e);
+        }
+        return 1;
+    }
+    
+    /**
+     * Hot reload пользовательских заклинаний (согласно CLAUDE.md)
+     */
+    private static int reloadSpells(CommandContext<CommandSourceStack> context) {
+        try {
+            // TODO: Реализовать когда будет Custom Spell Loader
+            context.getSource().sendSuccess(() -> Component.literal(
+                "Spell hot reload will be implemented with Custom Spell Loader system"
+            ), false);
+            
+            CombatMetaphysics.LOGGER.info("Spell reload command executed (not yet implemented)");
+        } catch (Exception e) {
+            context.getSource().sendFailure(Component.literal("Spell reload error: " + e.getMessage()));
+        }
+        return 1;
+    }
+    
+    /**
+     * НОВЫЕ КОМАНДЫ ДЛЯ УПРАВЛЕНИЯ ЗАЩИТОЙ БЛОКОВ
+     */
+    
+    private static int showProtectionStatus(CommandContext<CommandSourceStack> context) {
+        try {
+            var settings = BlockProtectionRegistry.getSettings();
+            
+            context.getSource().sendSuccess(() -> Component.literal("=== Block Protection Settings ==="), false);
+            context.getSource().sendSuccess(() -> Component.literal(String.format(
+                "Absolute: %s | Valuable: %s | Reinforced: %s | Infrastructure: %s",
+                settings.protectAbsolute ? "ON" : "OFF",
+                settings.protectValuable ? "ON" : "OFF", 
+                settings.protectReinforced ? "ON" : "OFF",
+                settings.protectInfrastructure ? "ON" : "OFF"
+            )), false);
+            context.getSource().sendSuccess(() -> Component.literal(String.format(
+                "Reinforced Power Threshold: %.1f", settings.reinforcedPowerThreshold
+            )), false);
+            
+            // Логируем детальную статистику
+            BlockProtectionRegistry.logProtectionStats();
+            
+        } catch (Exception e) {
+            context.getSource().sendFailure(Component.literal("Protection status error: " + e.getMessage()));
+        }
+        return 1;
+    }
+    
+    private static int setProtectValuable(CommandContext<CommandSourceStack> context) {
+        try {
+            boolean enabled = BoolArgumentType.getBool(context, "enabled");
+            var settings = BlockProtectionRegistry.getSettings();
+            settings.protectValuable = enabled;
+            
+            context.getSource().sendSuccess(() -> Component.literal(
+                String.format("Valuable block protection: %s", enabled ? "ENABLED" : "DISABLED")
+            ), false);
+            
+            CombatMetaphysics.LOGGER.info("Valuable block protection set to: {}", enabled);
+            
+        } catch (Exception e) {
+            context.getSource().sendFailure(Component.literal("Set valuable protection error: " + e.getMessage()));
+        }
+        return 1;
+    }
+    
+    private static int setProtectReinforced(CommandContext<CommandSourceStack> context) {
+        try {
+            boolean enabled = BoolArgumentType.getBool(context, "enabled");
+            var settings = BlockProtectionRegistry.getSettings();
+            settings.protectReinforced = enabled;
+            
+            context.getSource().sendSuccess(() -> Component.literal(
+                String.format("Reinforced block protection: %s", enabled ? "ENABLED" : "DISABLED")
+            ), false);
+            
+            CombatMetaphysics.LOGGER.info("Reinforced block protection set to: {}", enabled);
+            
+        } catch (Exception e) {
+            context.getSource().sendFailure(Component.literal("Set reinforced protection error: " + e.getMessage()));
+        }
+        return 1;
+    }
+    
+    private static int setProtectInfrastructure(CommandContext<CommandSourceStack> context) {
+        try {
+            boolean enabled = BoolArgumentType.getBool(context, "enabled");
+            var settings = BlockProtectionRegistry.getSettings();
+            settings.protectInfrastructure = enabled;
+            
+            context.getSource().sendSuccess(() -> Component.literal(
+                String.format("Infrastructure block protection: %s", enabled ? "ENABLED" : "DISABLED")
+            ), false);
+            
+            CombatMetaphysics.LOGGER.info("Infrastructure block protection set to: {}", enabled);
+            
+        } catch (Exception e) {
+            context.getSource().sendFailure(Component.literal("Set infrastructure protection error: " + e.getMessage()));
+        }
+        return 1;
+    }
+    
+    private static int setReinforcedThreshold(CommandContext<CommandSourceStack> context) {
+        try {
+            float threshold = FloatArgumentType.getFloat(context, "power");
+            var settings = BlockProtectionRegistry.getSettings();
+            settings.reinforcedPowerThreshold = threshold;
+            
+            context.getSource().sendSuccess(() -> Component.literal(
+                String.format("Reinforced power threshold set to: %.1f", threshold)
+            ), false);
+            
+            CombatMetaphysics.LOGGER.info("Reinforced power threshold set to: {}", threshold);
+            
+        } catch (Exception e) {
+            context.getSource().sendFailure(Component.literal("Set threshold error: " + e.getMessage()));
         }
         return 1;
     }

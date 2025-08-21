@@ -26,11 +26,7 @@ import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
-import net.neoforged.neoforge.event.server.ServerStartingEvent;
-import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import com.example.examplemod.commands.CombatCommands;
-import com.example.examplemod.server.CombatServerManager;
-import com.example.examplemod.network.CombatNetworkHandler;
 import com.example.examplemod.sounds.CombatSounds;
 import net.neoforged.neoforge.registries.DeferredBlock;
 import net.neoforged.neoforge.registries.DeferredHolder;
@@ -91,9 +87,6 @@ public class CombatMetaphysics {
 
         // Register the item to a creative tab
         modEventBus.addListener(this::addCreative);
-        
-        // Register combat network handlers
-        modEventBus.addListener(CombatNetworkHandler::register);
 
         // Register our mod's ModConfigSpec so that FML can create and load the config file for us
         modContainer.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
@@ -119,27 +112,11 @@ public class CombatMetaphysics {
         }
     }
 
-    // You can use SubscribeEvent and let the Event Bus discover methods to call
-    @SubscribeEvent
-    public void onServerStarting(ServerStartingEvent event) {
-        // Do something when the server starts
-        LOGGER.info("HELLO from server starting");
-        
-        // Инициализируем серверный combat менеджер
-        CombatServerManager.getInstance();
-        LOGGER.info("Combat Server Manager initialized");
-    }
-    
+    // SINGLEPLAYER: Команды регистрируются локально
     @SubscribeEvent
     public void onRegisterCommands(RegisterCommandsEvent event) {
-        // Register our combat commands
+        // Register our combat commands for singleplayer
         CombatCommands.register(event.getDispatcher());
-        LOGGER.info("Combat commands registered");
-    }
-    
-    @SubscribeEvent
-    public void onServerTick(ServerTickEvent.Post event) {
-        // Обновляем combat систему каждый тик
-        CombatServerManager.getInstance().tick();
+        LOGGER.info("Combat commands registered for SINGLEPLAYER");
     }
 }

@@ -13,6 +13,9 @@ out
 *.iml
 .idea
 *.wav
+*.txt
+*.md
+*.png
 
 # gradle
 build

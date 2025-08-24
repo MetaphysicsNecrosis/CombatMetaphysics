@@ -7,605 +7,709 @@ import org.slf4j.LoggerFactory;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
- * Гибридная state machine для combat системы, интегрирующая все подсистемы
- * Согласно CLAUDE.md: поддерживает магию, ближний бой и защитные действия
+ * Professional Gothic-style State Machine for Combat System
+ * Integrates: Gothic 3-phase attacks + QTE Magic system + Defense mechanics
+ * Event-driven architecture with automatic state transitions and timeouts
  */
 public class PlayerStateMachine {
     private static final Logger LOGGER = LoggerFactory.getLogger(PlayerStateMachine.class);
+    private static final ScheduledExecutorService SCHEDULER = Executors.newScheduledThreadPool(2);
     
-    // Статические экземпляры для каждого игрока
+    // Static instances per player
     private static final Map<UUID, PlayerStateMachine> instances = new HashMap<>();
     
+    // Core state management
     private final UUID playerId;
     private PlayerState currentState;
+    private PlayerState previousState;
     private long stateChangeTime;
-    private String currentAction;
-    private Player playerInstance; // Кэшируем Player объект для движения
+    private long stateTimeoutAt;
+    private Player playerInstance;
     
-    // Интегрированные системы
+    // Event system
+    private final Map<PlayerState, Consumer<StateTransitionEvent>> stateHandlers;
+    private final Map<String, Consumer<StateEvent>> eventHandlers;
+    
+    // Integrated systems
+    private final StaminaManager staminaManager;
+    private final GothicAttackSystem attackSystem;
+    private final GothicDefenseSystem defenseSystem;
     private final ResourceManager resourceManager;
-    private final ActionResolver actionResolver;
-    private final DirectionalAttackSystem attackSystem;
-    private final DefensiveActionsManager defenseSystem;
-    private final InterruptionSystem interruptionSystem;
-    private final RecoveryPeriodSystem recoverySystem;
+    
+    // Combat activity tracking
+    private long lastCombatActivity;
+    private static final long COMBAT_STANCE_TIMEOUT = 5000; // 5 seconds to return to peaceful
+    
+    // QTE System integration
+    private CompletableFuture<QTEResult> currentQTE;
+    private String currentComboChain;
+    private int comboStep;
     
     private PlayerStateMachine(UUID playerId, ResourceManager resourceManager) {
         this.playerId = playerId;
-        this.currentState = PlayerState.IDLE;
+        this.currentState = PlayerState.PEACEFUL;
+        this.previousState = PlayerState.PEACEFUL;
         this.stateChangeTime = System.currentTimeMillis();
-        this.currentAction = "";
+        this.stateTimeoutAt = Long.MAX_VALUE;
+        this.lastCombatActivity = System.currentTimeMillis();
         
-        // Инициализируем интегрированные системы
+        // Initialize integrated systems
+        this.staminaManager = new StaminaManager();
+        this.attackSystem = new GothicAttackSystem();
+        this.defenseSystem = new GothicDefenseSystem();
         this.resourceManager = resourceManager;
-        this.actionResolver = new ActionResolver();
-        this.attackSystem = new DirectionalAttackSystem(resourceManager);
-        this.defenseSystem = new DefensiveActionsManager(resourceManager);
-        this.interruptionSystem = new InterruptionSystem(this);
-        this.recoverySystem = new RecoveryPeriodSystem();
+        
+        // Initialize event system
+        this.stateHandlers = new HashMap<>();
+        this.eventHandlers = new HashMap<>();
+        setupStateHandlers();
+        setupEventHandlers();
+        
+        // Start automatic state management
+        startStateManagement();
     }
     
     /**
-     * Получает или создает экземпляр state machine для игрока
+     * Get or create state machine instance for player
      */
     public static PlayerStateMachine getInstance(UUID playerId, ResourceManager resourceManager) {
         return instances.computeIfAbsent(playerId, id -> new PlayerStateMachine(id, resourceManager));
     }
     
     /**
-     * Получает существующий экземпляр state machine для игрока
+     * Get existing state machine instance for player
      */
     public static PlayerStateMachine getInstance(UUID playerId) {
         return instances.get(playerId);
     }
     
     /**
-     * Удаляет экземпляр state machine для игрока
+     * Remove state machine instance for player
      */
     public static void removeInstance(UUID playerId) {
-        instances.remove(playerId);
-    }
-    
-    /**
-     * Базовый переход состояния с проверкой через ActionResolver
-     */
-    public boolean tryTransition(PlayerState newState, String action) {
-        return tryTransition(newState, action, ActionResolver.ActionType.MAGIC_CAST);
-    }
-    
-    /**
-     * Переход состояния с указанием типа действия
-     */
-    public boolean tryTransition(PlayerState newState, String action, ActionResolver.ActionType actionType) {
-        // Проверяем период восстановления
-        if (!recoverySystem.canTransitionTo(playerId, newState)) {
-            String blockingReason = recoverySystem.getBlockingReason(playerId, newState);
-            LOGGER.debug("State transition blocked by recovery period for player {}: {}", playerId, blockingReason);
-            return false;
-        }
-        
-        // Создаем запрос на действие
-        ActionResolver.ActionRequest request = new ActionResolver.ActionRequest(
-            playerId, actionType, newState, action);
-        
-        // Проверяем через ActionResolver
-        ActionResolver.ResolutionResult result = actionResolver.resolveAction(request, currentState);
-        
-        if (result.isAllowed()) {
-            PlayerState oldState = currentState;
-            currentState = newState;
-            stateChangeTime = System.currentTimeMillis();
-            currentAction = action != null ? action : "";
-            
-            // Синхронизируем ограничения движения
-            PlayerMovementController.syncWithPlayerState(playerId, newState);
-            
-            LOGGER.debug("Player {} state transition: {} -> {} (action: {}, type: {})", 
-                playerId, oldState, newState, action, actionType);
-            
-            // Уведомляем систему прерываний об успешном переходе
-            if (oldState == PlayerState.INTERRUPTED) {
-                interruptionSystem.clearInterruption(playerId);
-                recoverySystem.clearRecoveryPeriod(playerId); // Очищаем период восстановления при выходе из прерывания
-            }
-            
-            return true;
-        } else {
-            LOGGER.debug("State transition denied for player {}: {}", playerId, result.getReason());
-            return false;
+        PlayerStateMachine instance = instances.remove(playerId);
+        if (instance != null) {
+            instance.cleanup();
         }
     }
     
     /**
-     * Принудительный переход состояния (для системных действий)
-     */
-    public void forceTransition(PlayerState newState, String reason) {
-        PlayerState oldState = currentState;
-        currentState = newState;
-        stateChangeTime = System.currentTimeMillis();
-        currentAction = reason != null ? reason : "";
-        
-        // Синхронизируем ограничения движения при принудительном переходе
-        PlayerMovementController.syncWithPlayerState(playerId, newState);
-        
-        LOGGER.warn("Forced state transition for player {}: {} -> {} (reason: {})", 
-            playerId, oldState, newState, reason);
-        
-        // Очищаем действие в ActionResolver
-        actionResolver.clearAction(playerId);
-        
-        // Очищаем системы при выходе из прерванного состояния
-        if (oldState == PlayerState.INTERRUPTED) {
-            interruptionSystem.clearInterruption(playerId);
-            recoverySystem.clearRecoveryPeriod(playerId);
-        }
-    }
-    
-    /**
-     * Прерывание через InterruptionSystem
-     */
-    public boolean interrupt(InterruptionSystem.InterruptionType type, String reason) {
-        PlayerState stateBeforeInterruption = currentState;
-        
-        InterruptionSystem.InterruptionRequest request = 
-            new InterruptionSystem.InterruptionRequest(playerId, null, type, reason);
-        
-        InterruptionSystem.InterruptionResult result = interruptionSystem.processInterruption(request);
-        
-        if (result.isSuccess()) {
-            // Запускаем период восстановления согласно Base_Rules.txt
-            recoverySystem.processInterruptionRecovery(playerId, stateBeforeInterruption, type, reason);
-            
-            // Синхронизируем ограничения движения для прерванного состояния
-            PlayerMovementController.syncWithPlayerState(playerId, result.getResultingState());
-        }
-        
-        return result.isSuccess();
-    }
-    
-    // === МАГИЧЕСКИЕ ДЕЙСТВИЯ ===
-    
-    /**
-     * Начинает подготовку магического заклинания
-     */
-    public boolean startMagicPreparation(String spellName, float manaCost) {
-        if (!resourceManager.canReserveMana(manaCost)) {
-            return false;
-        }
-        
-        if (tryTransition(PlayerState.MAGIC_PREPARING, "Preparing spell: " + spellName, 
-                         ActionResolver.ActionType.MAGIC_CAST)) {
-            resourceManager.tryReserveMana(manaCost, "Magic preparation: " + spellName);
-            return true;
-        }
-        return false;
-    }
-    
-    /**
-     * Переходит к кастованию заклинания
-     */
-    public boolean startMagicCasting(String spellName) {
-        return tryTransition(PlayerState.MAGIC_CASTING, "Casting spell: " + spellName, 
-                           ActionResolver.ActionType.MAGIC_CAST);
-    }
-    
-    /**
-     * Активирует QTE переход
-     */
-    public boolean startQTETransition(String qteType) {
-        return tryTransition(PlayerState.QTE_TRANSITION, "QTE: " + qteType, 
-                           ActionResolver.ActionType.MAGIC_CAST);
-    }
-    
-    // === БЛИЖНИЙ БОЙ ===
-    
-    /**
-     * Начинает подготовку атаки ближнего боя
-     */
-    public boolean startMeleePreparation(DirectionalAttackSystem.AttackDirection direction) {
-        if (tryTransition(PlayerState.MELEE_PREPARING, "Preparing melee attack: " + direction, 
-                         ActionResolver.ActionType.MELEE_ATTACK)) {
-            return attackSystem.startCharging(playerId, direction);
-        }
-        return false;
-    }
-    
-    /**
-     * Переходит к зарядке атаки
-     */
-    public boolean startMeleeCharging() {
-        return tryTransition(PlayerState.MELEE_CHARGING, "Charging melee attack", 
-                           ActionResolver.ActionType.MELEE_ATTACK);
-    }
-    
-    /**
-     * Выполняет атаку ближнего боя
-     */
-    public DirectionalAttackSystem.AttackResult executeMeleeAttack() {
-        if (tryTransition(PlayerState.MELEE_ATTACKING, "Executing melee attack", 
-                         ActionResolver.ActionType.MELEE_ATTACK)) {
-            DirectionalAttackSystem.AttackResult result = attackSystem.executeAttack(playerId);
-            
-            // Применяем анимационное движение если атака успешна
-            if (result.isSuccess()) {
-                DirectionalAttackSystem.AttackData attackData = attackSystem.getCurrentAttack(playerId);
-                if (attackData != null) {
-                    // Получаем Player объект для движения (предполагается, что он доступен в контексте)
-                    applyAttackMovement(attackData.getDirection());
-                }
-            }
-            
-            return result;
-        }
-        return new DirectionalAttackSystem.AttackResult(false, "Invalid state for melee attack", 0, 0, false);
-    }
-    
-    /**
-     * Устанавливает Player объект для движения
-     */
-    public void setPlayerInstance(Player player) {
-        this.playerInstance = player;
-    }
-    
-    
-    /**
-     * Применяет движение атаки
-     */
-    private void applyAttackMovement(DirectionalAttackSystem.AttackDirection direction) {
-        Player player = this.playerInstance;
-        if (player != null) {
-            PlayerMovementController.applyAttackMovement(player, direction);
-            LOGGER.debug("Applied attack movement for player {} with direction {}", playerId, direction);
-        } else {
-            LOGGER.warn("Cannot apply attack movement - no player instance for {}", playerId);
-        }
-    }
-    
-    // === ЗАЩИТНЫЕ ДЕЙСТВИЯ ===
-    
-    /**
-     * Активирует защитное действие
-     */
-    public boolean startDefensiveAction(DefensiveActionsManager.DefensiveType type) {
-        if (tryTransition(PlayerState.DEFENSIVE_ACTION, "Starting defensive action: " + type, 
-                         ActionResolver.ActionType.DEFENSIVE_ACTION)) {
-            // Сразу переходим к выполнению защиты
-            return executeDefense(type);
-        }
-        return false;
-    }
-    
-    /**
-     * Переходит к конкретному защитному состоянию
-     */
-    public boolean executeDefense(DefensiveActionsManager.DefensiveType type) {
-        PlayerState targetState = switch (type) {
-            case PARRY -> PlayerState.PARRYING;
-            case BLOCK -> PlayerState.BLOCKING;
-            case DODGE -> PlayerState.DODGING;
-        };
-        
-        if (tryTransition(targetState, "Executing defense: " + type, 
-                         ActionResolver.ActionType.DEFENSIVE_ACTION)) {
-            // Активируем защитную систему
-            boolean success = defenseSystem.activateDefense(playerId, type);
-            
-            // Применяем движение уклонения если нужно
-            if (success && type == DefensiveActionsManager.DefensiveType.DODGE) {
-                applyDodgeMovement();
-            }
-            
-            return success;
-        }
-        return false;
-    }
-    
-    /**
-     * Применяет движение уклонения
-     */
-    private void applyDodgeMovement() {
-        Player player = this.playerInstance;
-        if (player != null) {
-            // Определяем направление уклонения на основе ввода игрока
-            // TODO: Получить направление от input system
-            PlayerMovementController.DodgeDirection direction = PlayerMovementController.DodgeDirection.BACKWARD;
-            PlayerMovementController.applyDodgeMovement(player, direction);
-            LOGGER.debug("Applied dodge movement for player {}", playerId);
-        } else {
-            LOGGER.warn("Cannot apply dodge movement - no player instance for {}", playerId);
-        }
-    }
-    
-    // === СИСТЕМА ВОССТАНОВЛЕНИЯ ===
-    
-    /**
-     * Переходит к восстановлению после действия
-     */
-    public boolean startRecovery(String actionType) {
-        PlayerState recoveryState = switch (currentState.getCombatType()) {
-            case MAGIC -> PlayerState.MAGIC_COOLDOWN;
-            case MELEE -> PlayerState.MELEE_RECOVERY;
-            case DEFENSIVE -> PlayerState.DEFENSIVE_RECOVERY;
-            default -> PlayerState.COOLDOWN;
-        };
-        
-        return tryTransition(recoveryState, "Recovery from: " + actionType);
-    }
-    
-    // === МЕТОДЫ ДЛЯ ACTIONRESOLVER ===
-    
-    /**
-     * Проверяет, был ли игрок прерван
-     */
-    public boolean wasInterrupted(UUID playerId) {
-        return interruptionSystem.isInterrupted(playerId);
-    }
-    
-    // === СИСТЕМА TICK И ОБСЛУЖИВАНИЕ ===
-    
-    /**
-     * Обновляет состояние всех систем игрока
-     */
-    public void tick() {
-        // Обновляем системы восстановления
-        recoverySystem.tick();
-        
-        // Очищаем истекшие защитные действия
-        defenseSystem.advancedTick();
-        
-        // Очищаем истекшие атаки
-        attackSystem.cleanupExpiredAttacks(10000); // 10 секунд максимальный возраст
-        attackSystem.cleanupExpiredCombos();
-        
-        // Очищаем истекшие прерывания
-        interruptionSystem.cleanupExpiredInterruptions(5000); // 5 секунд
-        
-        // Автоматический переход из INTERRUPTED в IDLE при завершении периода восстановления
-        if (currentState == PlayerState.INTERRUPTED && !recoverySystem.isInRecoveryPeriod(playerId)) {
-            tryTransition(PlayerState.IDLE, "Recovery period completed");
-        }
-    }
-    
-    // === ГЕТТЕРЫ ДЛЯ ИНТЕГРИРОВАННЫХ СИСТЕМ ===
-    
-    public RecoveryPeriodSystem getRecoverySystem() { 
-        return recoverySystem; 
-    }
-    
-    public DirectionalAttackSystem getAttackSystem() { 
-        return attackSystem; 
-    }
-    
-    public DefensiveActionsManager getDefenseSystem() { 
-        return defenseSystem; 
-    }
-    
-    public InterruptionSystem getInterruptionSystem() { 
-        return interruptionSystem; 
-    }
-    
-    public ResourceManager getResourceManager() { 
-        return resourceManager; 
-    }
-    
-    // === ПОЛНАЯ ИНТЕГРАЦИЯ С ДВИЖЕНИЕМ ===
-    
-    /**
-     * Очищает все состояния игрока при отключении или сбросе
-     */
-    public void cleanup() {
-        // Очищаем все ограничения движения
-        PlayerMovementController.removeMovementRestriction(playerId);
-        
-        // Очищаем периоды восстановления
-        recoverySystem.clearRecoveryPeriod(playerId);
-        
-        // Очищаем прерывания
-        interruptionSystem.clearInterruption(playerId);
-        
-        // Отменяем активные действия
-        if (attackSystem.isCharging(playerId) || attackSystem.isAttacking(playerId)) {
-            attackSystem.cancelCharging(playerId);
-        }
-        
-        if (defenseSystem.isDefending(playerId)) {
-            defenseSystem.deactivateDefense(playerId);
-        }
-        
-        // Принудительно переводим в IDLE
-        forceTransition(PlayerState.IDLE, "Player cleanup");
-        
-        LOGGER.info("Cleaned up combat state for player {}", playerId);
-    }
-    
-    /**
-     * Получает детальную информацию о состоянии игрока для отладки
-     */
-    public Map<String, Object> getDebugInfo() {
-        Map<String, Object> info = new HashMap<>();
-        
-        // Базовая информация о состоянии
-        info.put("playerId", playerId.toString());
-        info.put("currentState", currentState.name());
-        info.put("timeInState", getTimeInCurrentState());
-        info.put("currentAction", currentAction);
-        
-        // Информация о движении
-        PlayerMovementController.MovementRestriction restriction = 
-            PlayerMovementController.getMovementRestriction(playerId);
-        info.put("movementRestricted", restriction != null);
-        if (restriction != null) {
-            info.put("restrictionType", restriction.getRestrictingState().name());
-            info.put("restrictionDuration", restriction.getDuration());
-        }
-        
-        // Информация о восстановлении
-        info.put("inRecoveryPeriod", recoverySystem.isInRecoveryPeriod(playerId));
-        if (recoverySystem.isInRecoveryPeriod(playerId)) {
-            RecoveryPeriodSystem.RecoveryPeriod recovery = recoverySystem.getCurrentRecovery(playerId);
-            info.put("recoveryType", recovery.getType().name());
-            info.put("recoveryProgress", recovery.getRecoveryProgress());
-            info.put("recoveryRemainingMs", recovery.getRemainingTime());
-        }
-        
-        // Информация о боевых системах
-        info.put("isCharging", attackSystem.isCharging(playerId));
-        info.put("isAttacking", attackSystem.isAttacking(playerId));
-        info.put("isDefending", defenseSystem.isDefending(playerId));
-        info.put("isInterrupted", interruptionSystem.isInterrupted(playerId));
-        
-        // Ресурсы
-        info.put("currentStamina", resourceManager.getCurrentStamina(playerId));
-        info.put("currentMana", resourceManager.getCurrentMana(playerId));
-        info.put("reservedMana", resourceManager.getReservedMana());
-        
-        return info;
-    }
-    
-    /**
-     * Статический метод для полной очистки всех игроков
-     */
-    public static void cleanupAllPlayers() {
-        instances.values().forEach(PlayerStateMachine::cleanup);
-        PlayerMovementController.clearAllRestrictions();
-        LOGGER.info("Cleaned up all player combat states");
-    }
-    
-    /**
-     * Получает все активные экземпляры state machine
+     * Get all active instances (for system monitoring)
      */
     public static Map<UUID, PlayerStateMachine> getAllInstances() {
         return new HashMap<>(instances);
     }
     
+    // ===== PROFESSIONAL STATE MACHINE API =====
     
     /**
-     * Получает время начала QTE для игрока
+     * Direct state transition - validates and executes state change
      */
-    public long getQteStartTime(UUID playerId) {
-        // Возвращаем время перехода в QTE_TRANSITION состояние
-        if (currentState == PlayerState.QTE_TRANSITION) {
-            return stateChangeTime;
-        }
-        return System.currentTimeMillis(); // Fallback
+    public StateTransitionResult transitionTo(PlayerState newState) {
+        return transitionTo(newState, null, 0);
     }
     
     /**
-     * Завершает действие и возвращается к IDLE
+     * State transition with reason (no timeout)
      */
-    public boolean completeAction() {
-        // Очищаем соответствующие системы
-        if (currentState.isMeleeState()) {
-            attackSystem.completeAttack(playerId);
-        }
-        if (currentState.isDefensiveState()) {
-            defenseSystem.deactivateDefense(playerId);
-        }
-        
-        // Очищаем действие в ActionResolver
-        actionResolver.clearAction(playerId);
-        
-        return tryTransition(PlayerState.IDLE, "Action completed");
+    public StateTransitionResult transitionTo(PlayerState newState, String reason) {
+        return transitionTo(newState, reason, 0);
     }
     
-    // === TICK СИСТЕМА ===
-    
+    /**
+     * State transition with timeout
+     */
+    public StateTransitionResult transitionTo(PlayerState newState, String reason, long timeoutMs) {
+        // Validate transition
+        if (!canTransitionTo(newState)) {
+            return StateTransitionResult.failed("Invalid transition from " + currentState + " to " + newState);
+        }
+        
+        // Execute transition
+        PlayerState oldState = currentState;
+        previousState = currentState;
+        currentState = newState;
+        stateChangeTime = System.currentTimeMillis();
+        
+        // Set timeout if specified
+        if (timeoutMs > 0) {
+            stateTimeoutAt = stateChangeTime + timeoutMs;
+        } else {
+            // Use default state timeout
+            long defaultTimeout = newState.getTypicalDuration();
+            stateTimeoutAt = defaultTimeout == Long.MAX_VALUE ? Long.MAX_VALUE : stateChangeTime + defaultTimeout;
+        }
+        
+        // Update combat activity
+        if (newState.isCombatState()) {
+            lastCombatActivity = System.currentTimeMillis();
+        }
+        
+        // Sync movement restrictions
+        PlayerMovementController.syncWithPlayerState(playerId, newState);
+        
+        // Fire state transition event
+        StateTransitionEvent event = new StateTransitionEvent(playerId, oldState, newState, reason);
+        fireStateTransitionEvent(event);
+        
+        LOGGER.debug("Player {} transitioned: {} -> {} ({})", playerId, oldState, newState, reason);
+        return StateTransitionResult.success("Transitioned to " + newState);
+    }
     
     /**
-     * Проверяет и исправляет некорректные состояния
+     * Force transition bypassing validation - use only for interruptions
      */
-    private void validateAndFixState() {
-        long timeInState = getTimeInCurrentState();
+    public void forceTransition(PlayerState newState, String reason) {
+        transitionTo(newState, reason, 0);
+        LOGGER.warn("Player {} forced transition to {} - {}", playerId, newState, reason);
+    }
+    
+    /**
+     * Check if transition is valid
+     */
+    private boolean canTransitionTo(PlayerState newState) {
+        return currentState.canTransitionTo(newState);
+    }
+    
+    // ===== GOTHIC COMBAT SYSTEM INTEGRATION =====
+    
+    /**
+     * Start Gothic attack with direction
+     */
+    public GothicAttackSystem.AttackResult startGothicAttack(GothicAttackSystem.AttackDirection direction) {
+        if (!canTransitionTo(PlayerState.ATTACK_WINDUP)) {
+            return GothicAttackSystem.AttackResult.failed("Cannot start attack from state: " + currentState);
+        }
         
-        // Если игрок застрял в состоянии слишком долго - принудительный сброс
-        if (timeInState > 30000) { // 30 секунд
-            LOGGER.warn("Player {} stuck in state {} for {}ms, forcing reset", 
-                playerId, currentState, timeInState);
-            
-            // Очищаем все ограничения движения при принудительном сбросе
-            PlayerMovementController.removeMovementRestriction(playerId);
-            recoverySystem.clearRecoveryPeriod(playerId);
-            
-            forceTransition(PlayerState.IDLE, "Stuck state auto-reset");
+        // Set current player context for stamina manager
+        staminaManager.setCurrentPlayer(playerId);
+        
+        // Check stamina
+        if (!staminaManager.hasStamina(20)) {
+            return GothicAttackSystem.AttackResult.failed("Insufficient stamina for attack");
+        }
+        
+        // Transition to windup
+        StateTransitionResult result = transitionTo(PlayerState.ATTACK_WINDUP, "Gothic attack: " + direction, 300);
+        if (!result.isSuccess()) {
+            return GothicAttackSystem.AttackResult.failed(result.getMessage());
+        }
+        
+        // Execute attack through Gothic system
+        return attackSystem.executeAttack(direction, staminaManager, playerInstance);
+    }
+    
+    /**
+     * Start defense action
+     */
+    public GothicDefenseSystem.DefenseActionResult startDefense(GothicDefenseSystem.DefenseType type) {
+        PlayerState targetState = switch (type) {
+            case BLOCK -> PlayerState.BLOCKING;
+            case PARRY -> PlayerState.PARRYING;
+            case DODGE -> PlayerState.DODGING;
+        };
+        
+        if (!canTransitionTo(targetState)) {
+            return GothicDefenseSystem.DefenseActionResult.failed("Cannot start defense from state: " + currentState);
+        }
+        
+        // Set current player context
+        staminaManager.setCurrentPlayer(playerId);
+        
+        // Check stamina requirements
+        int staminaCost = switch (type) {
+            case BLOCK -> 10;
+            case PARRY -> 15;
+            case DODGE -> 25;
+        };
+        
+        if (!staminaManager.hasStamina(staminaCost)) {
+            return GothicDefenseSystem.DefenseActionResult.failed("Insufficient stamina for " + type);
+        }
+        
+        // Transition to defense state
+        long timeout = switch (type) {
+            case PARRY -> 150; // 100-200ms parry window
+            case DODGE -> 300; // 300ms i-frames
+            case BLOCK -> 1500; // 1.5s block duration
+        };
+        
+        StateTransitionResult result = transitionTo(targetState, "Defense: " + type, timeout);
+        if (!result.isSuccess()) {
+            return GothicDefenseSystem.DefenseActionResult.failed(result.getMessage());
+        }
+        
+        // Execute defense through Gothic system
+        return defenseSystem.executeDefense(type, staminaManager, playerInstance);
+    }
+    
+    // ===== QTE MAGIC SYSTEM INTEGRATION =====
+    
+    /**
+     * Start magic spell preparation
+     */
+    public boolean startMagicPreparation(String spellName, int manaCost) {
+        if (!canTransitionTo(PlayerState.MAGIC_PREPARING)) {
+            LOGGER.debug("Cannot prepare magic from state: {}", currentState);
+            return false;
+        }
+        
+        // Check mana availability
+        if (!resourceManager.canSpendMana(manaCost)) {
+            LOGGER.debug("Insufficient mana for spell: {} (cost: {})", spellName, manaCost);
+            return false;
+        }
+        
+        // Reserve mana
+        if (!resourceManager.tryReserveMana(manaCost, "Magic preparation: " + spellName)) {
+            return false;
+        }
+        
+        // Transition to preparation
+        StateTransitionResult result = transitionTo(PlayerState.MAGIC_PREPARING, 
+            "Preparing spell: " + spellName, 1000);
+        
+        return result.isSuccess();
+    }
+    
+    /**
+     * Start magic casting
+     */
+    public boolean startMagicCasting(String spellName) {
+        if (!canTransitionTo(PlayerState.MAGIC_CASTING)) {
+            LOGGER.debug("Cannot cast magic from state: {}", currentState);
+            return false;
+        }
+        
+        StateTransitionResult result = transitionTo(PlayerState.MAGIC_CASTING, 
+            "Casting spell: " + spellName, 2000);
+        
+        return result.isSuccess();
+    }
+    
+    /**
+     * Start QTE transition for combo magic
+     */
+    public CompletableFuture<QTEResult> startQTETransition(String qteType, long windowMs) {
+        if (!canTransitionTo(PlayerState.QTE_TRANSITION)) {
+            return CompletableFuture.completedFuture(QTEResult.failed("Cannot start QTE from state: " + currentState));
+        }
+        
+        // Transition to QTE state
+        StateTransitionResult result = transitionTo(PlayerState.QTE_TRANSITION, 
+            "QTE: " + qteType, windowMs);
+        
+        if (!result.isSuccess()) {
+            return CompletableFuture.completedFuture(QTEResult.failed(result.getMessage()));
+        }
+        
+        // Start QTE system
+        currentQTE = new CompletableFuture<>();
+        
+        // Auto-timeout QTE
+        SCHEDULER.schedule(() -> {
+            if (!currentQTE.isDone()) {
+                currentQTE.complete(QTEResult.missed("QTE timeout"));
+                transitionTo(PlayerState.COMBAT_STANCE, "QTE timeout", 0);
+            }
+        }, windowMs, TimeUnit.MILLISECONDS);
+        
+        return currentQTE;
+    }
+    
+    /**
+     * Handle QTE input
+     */
+    public void handleQTEInput(String input, long timing) {
+        if (currentState != PlayerState.QTE_TRANSITION || currentQTE == null) {
             return;
         }
         
-        // Проверяем соответствие состояния и подсистем
-        switch (currentState) {
-            case BLOCKING, PARRYING, DODGING -> {
-                if (!defenseSystem.isDefending(playerId)) {
-                    LOGGER.debug("Defense state {} but no active defense, transitioning to recovery", currentState);
-                    tryTransition(PlayerState.DEFENSIVE_RECOVERY, "Defense system mismatch");
-                }
-            }
-            case MELEE_CHARGING -> {
-                if (!attackSystem.isCharging(playerId)) {
-                    LOGGER.debug("Melee charging state but no active charge, resetting");
-                    forceTransition(PlayerState.IDLE, "Melee system mismatch");
-                }
-            }
-        }
+        // Calculate QTE result based on timing
+        QTEResult result = calculateQTEResult(input, timing);
+        currentQTE.complete(result);
         
-        // Проверяем соответствие ограничений движения текущему состоянию
-        boolean shouldRestrict = PlayerMovementController.shouldRestrictMovement(currentState);
-        boolean isRestricted = !PlayerMovementController.canPlayerMove(playerId);
-        
-        if (shouldRestrict && !isRestricted) {
-            LOGGER.debug("Player {} should be restricted in state {} but isn't - fixing", playerId, currentState);
-            PlayerMovementController.syncWithPlayerState(playerId, currentState);
-        } else if (!shouldRestrict && isRestricted) {
-            LOGGER.debug("Player {} is restricted in state {} but shouldn't be - fixing", playerId, currentState);
-            PlayerMovementController.removeMovementRestriction(playerId);
+        // Transition based on QTE result
+        if (result.isSuccess()) {
+            if (result.isPerfect()) {
+                transitionTo(PlayerState.MAGIC_CASTING, "Perfect QTE - continue combo", 0);
+            } else {
+                transitionTo(PlayerState.MAGIC_CASTING, "Good QTE - continue combo", 0);
+            }
+        } else {
+            // Failed QTE - lose reserved mana and return to combat stance
+            resourceManager.loseReservedMana("QTE failed");
+            transitionTo(PlayerState.COMBAT_STANCE, "QTE failed - combo broken", 0);
         }
     }
     
-    private void checkStateTimeouts() {
-        long timeInState = getTimeInCurrentState();
+    private QTEResult calculateQTEResult(String input, long timing) {
+        // QTE timing calculation (OSU-style)
+        long currentTime = System.currentTimeMillis();
+        long targetTime = stateChangeTime + 1000; // 1 second into QTE window
+        long deviation = Math.abs(currentTime - targetTime);
         
-        // Автоматические переходы по таймауту
-        switch (currentState) {
-            case DEFENSIVE_ACTION -> {
-                if (timeInState > 500) { // 500ms для выбора защиты
-                    forceTransition(PlayerState.IDLE, "Defense action timeout - no defense selected");
+        if (deviation <= 25) {
+            return QTEResult.perfect("Perfect timing!");
+        } else if (deviation <= 50) {
+            return QTEResult.great("Great timing!");
+        } else if (deviation <= 100) {
+            return QTEResult.good("Good timing");
+        } else if (deviation <= 150) {
+            return QTEResult.ok("OK timing");
+        } else {
+            return QTEResult.missed("Missed QTE");
+        }
+    }
+    
+    // ===== EVENT SYSTEM =====
+    
+    private void setupStateHandlers() {
+        // Auto-transitions for Gothic attack phases
+        stateHandlers.put(PlayerState.ATTACK_WINDUP, event -> {
+            SCHEDULER.schedule(() -> {
+                if (currentState == PlayerState.ATTACK_WINDUP) {
+                    transitionTo(PlayerState.ATTACK_ACTIVE, "Auto: windup -> active", 200);
                 }
+            }, 300, TimeUnit.MILLISECONDS);
+        });
+        
+        stateHandlers.put(PlayerState.ATTACK_ACTIVE, event -> {
+            SCHEDULER.schedule(() -> {
+                if (currentState == PlayerState.ATTACK_ACTIVE) {
+                    transitionTo(PlayerState.ATTACK_RECOVERY, "Auto: active -> recovery", 400);
+                }
+            }, 200, TimeUnit.MILLISECONDS);
+        });
+        
+        stateHandlers.put(PlayerState.ATTACK_RECOVERY, event -> {
+            SCHEDULER.schedule(() -> {
+                if (currentState == PlayerState.ATTACK_RECOVERY) {
+                    transitionTo(PlayerState.COMBO_WINDOW, "Auto: recovery -> combo window", 600);
+                }
+            }, 400, TimeUnit.MILLISECONDS);
+        });
+        
+        stateHandlers.put(PlayerState.COMBO_WINDOW, event -> {
+            SCHEDULER.schedule(() -> {
+                if (currentState == PlayerState.COMBO_WINDOW) {
+                    transitionTo(PlayerState.COMBAT_STANCE, "Auto: combo window timeout", 0);
+                }
+            }, 600, TimeUnit.MILLISECONDS);
+        });
+    }
+    
+    private void setupEventHandlers() {
+        eventHandlers.put("damage_taken", event -> {
+            if (currentState.canBeInterrupted()) {
+                forceTransition(PlayerState.STUNNED, "Interrupted by damage");
             }
-            case BLOCKING, PARRYING, DODGING -> {
-                // Проверяем через defense system
-                defenseSystem.tick(); // Обновляем защитную систему
-                if (!defenseSystem.isDefending(playerId)) {
-                    tryTransition(PlayerState.DEFENSIVE_RECOVERY, "Defense action completed");
-                }
+        });
+        
+        eventHandlers.put("stamina_exhausted", event -> {
+            if (currentState.isAttackState() || currentState.isDefensiveState()) {
+                forceTransition(PlayerState.EXHAUSTED, "Stamina exhausted");
             }
-            case MAGIC_COOLDOWN, MELEE_RECOVERY, DEFENSIVE_RECOVERY -> {
-                if (timeInState > 3000) { // 3 секунды
-                    tryTransition(PlayerState.COOLDOWN, "Recovery timeout");
-                }
-            }
-            case COOLDOWN -> {
-                if (timeInState > 1000) { // 1 секунда
-                    completeAction();
-                }
-            }
-            case INTERRUPTED -> {
-                if (timeInState > 2000) { // 2 секунды
-                    completeAction();
-                }
+        });
+    }
+    
+    private void fireStateTransitionEvent(StateTransitionEvent event) {
+        Consumer<StateTransitionEvent> handler = stateHandlers.get(event.getNewState());
+        if (handler != null) {
+            try {
+                handler.accept(event);
+            } catch (Exception e) {
+                LOGGER.error("Error in state handler for {}: {}", event.getNewState(), e.getMessage());
             }
         }
     }
     
-    // === ГЕТТЕРЫ ===
+    public void fireEvent(String eventType, Object data) {
+        Consumer<StateEvent> handler = eventHandlers.get(eventType);
+        if (handler != null) {
+            try {
+                handler.accept(new StateEvent(eventType, data));
+            } catch (Exception e) {
+                LOGGER.error("Error in event handler for {}: {}", eventType, e.getMessage());
+            }
+        }
+    }
+    
+    // ===== AUTOMATIC STATE MANAGEMENT =====
+    
+    private void startStateManagement() {
+        // Auto-timeout states
+        SCHEDULER.scheduleAtFixedRate(() -> {
+            long now = System.currentTimeMillis();
+            
+            // Check state timeout
+            if (now >= stateTimeoutAt && stateTimeoutAt != Long.MAX_VALUE) {
+                handleStateTimeout();
+            }
+            
+            // Check combat stance timeout
+            if (currentState == PlayerState.COMBAT_STANCE && 
+                (now - lastCombatActivity) > COMBAT_STANCE_TIMEOUT) {
+                transitionTo(PlayerState.PEACEFUL, "Combat stance timeout", 0);
+            }
+            
+        }, 50, 50, TimeUnit.MILLISECONDS);
+    }
+    
+    private void handleStateTimeout() {
+        switch (currentState) {
+            case PARRYING -> transitionTo(PlayerState.COMBAT_STANCE, "Parry window ended", 0);
+            case BLOCKING -> transitionTo(PlayerState.COMBAT_STANCE, "Block duration ended", 0);
+            case DODGING -> transitionTo(PlayerState.COMBAT_STANCE, "Dodge completed", 0);
+            case STUNNED -> transitionTo(PlayerState.COMBAT_STANCE, "Stun duration ended", 0);
+            case MAGIC_PREPARING -> transitionTo(PlayerState.COMBAT_STANCE, "Magic preparation timeout", 0);
+            case MAGIC_CASTING -> transitionTo(PlayerState.COMBAT_STANCE, "Magic cast completed", 0);
+            case QTE_TRANSITION -> {
+                if (currentQTE != null && !currentQTE.isDone()) {
+                    currentQTE.complete(QTEResult.missed("QTE timeout"));
+                }
+                transitionTo(PlayerState.COMBAT_STANCE, "QTE timeout", 0);
+            }
+            default -> { /* No timeout action needed */ }
+        }
+        
+        stateTimeoutAt = Long.MAX_VALUE;
+    }
+    
+    // ===== COMPATIBILITY METHODS (DEPRECATED) =====
+    
+    @Deprecated
+    public boolean startMeleePreparation(DirectionalAttackSystem.AttackDirection direction) {
+        GothicAttackSystem.AttackDirection gothicDir = convertToGothicDirection(direction);
+        return startGothicAttack(gothicDir).isSuccess();
+    }
+    
+    @Deprecated
+    public DirectionalAttackSystem.AttackResult executeMeleeAttack() {
+        // Stub - Gothic system handles attacks automatically
+        return new DirectionalAttackSystem.AttackResult(true, "Gothic attack executed", 1, 10.0f, false);
+    }
+    
+    @Deprecated
+    public boolean startDefensiveAction(DefensiveActionsManager.DefensiveType type) {
+        GothicDefenseSystem.DefenseType gothicType = convertToGothicDefenseType(type);
+        return startDefense(gothicType).isSuccess();
+    }
+    
+    @Deprecated
+    public boolean executeDefense(DefensiveActionsManager.DefensiveType type) {
+        return startDefensiveAction(type);
+    }
+    
+    private GothicAttackSystem.AttackDirection convertToGothicDirection(DirectionalAttackSystem.AttackDirection direction) {
+        return switch (direction) {
+            case LEFT_ATTACK -> GothicAttackSystem.AttackDirection.LEFT;
+            case RIGHT_ATTACK -> GothicAttackSystem.AttackDirection.RIGHT;
+            case TOP_ATTACK -> GothicAttackSystem.AttackDirection.TOP;
+            case THRUST_ATTACK -> GothicAttackSystem.AttackDirection.THRUST;
+        };
+    }
+    
+    private GothicDefenseSystem.DefenseType convertToGothicDefenseType(DefensiveActionsManager.DefensiveType type) {
+        return switch (type) {
+            case BLOCK -> GothicDefenseSystem.DefenseType.BLOCK;
+            case PARRY -> GothicDefenseSystem.DefenseType.PARRY;
+            case DODGE -> GothicDefenseSystem.DefenseType.DODGE;
+        };
+    }
+    
+    // ===== CLEANUP AND UTILITIES =====
+    
+    /**
+     * Clean up resources when player disconnects
+     */
+    public void cleanup() {
+        if (currentQTE != null && !currentQTE.isDone()) {
+            currentQTE.complete(QTEResult.failed("Player disconnected"));
+        }
+        stateHandlers.clear();
+        eventHandlers.clear();
+        LOGGER.debug("Cleaned up state machine for player {}", playerId);
+    }
+    
+    /**
+     * Get debug information about current state
+     */
+    public Map<String, Object> getDebugInfo() {
+        Map<String, Object> info = new HashMap<>();
+        info.put("playerId", playerId.toString());
+        info.put("currentState", currentState.name());
+        info.put("previousState", previousState.name());
+        info.put("timeInState", getTimeInCurrentState());
+        info.put("timeoutIn", stateTimeoutAt == Long.MAX_VALUE ? "never" : (stateTimeoutAt - System.currentTimeMillis()));
+        info.put("timeSinceLastCombatActivity", System.currentTimeMillis() - lastCombatActivity);
+        
+        // Gothic systems
+        info.put("stamina", staminaManager.getCurrentStamina());
+        info.put("maxStamina", staminaManager.getMaxStamina());
+        info.put("mana", resourceManager.getCurrentMana());
+        info.put("reservedMana", resourceManager.getReservedMana());
+        info.put("maxMana", resourceManager.getMaxMana());
+        
+        // QTE info
+        if (currentQTE != null) {
+            info.put("qteActive", !currentQTE.isDone());
+            info.put("comboChain", currentComboChain);
+            info.put("comboStep", comboStep);
+        }
+        
+        return info;
+    }
+    
+    // ===== GETTERS =====
     
     public PlayerState getCurrentState() { return currentState; }
+    public PlayerState getPreviousState() { return previousState; }
     public long getStateChangeTime() { return stateChangeTime; }
     public long getTimeInCurrentState() { return System.currentTimeMillis() - stateChangeTime; }
-    public String getCurrentAction() { return currentAction; }
     public UUID getPlayerId() { return playerId; }
     public boolean isActive() { return currentState.isActive(); }
-    public boolean canStartNewAction() { return currentState == PlayerState.IDLE; }
+    public boolean canStartNewAction() { return currentState == PlayerState.PEACEFUL || currentState == PlayerState.COMBAT_STANCE; }
+    public StaminaManager getStaminaManager() { return staminaManager; }
+    public ResourceManager getResourceManager() { return resourceManager; }
+    public GothicAttackSystem getAttackSystem() { return attackSystem; }
+    public GothicDefenseSystem getDefenseSystem() { return defenseSystem; }
     
-    public Player getPlayerInstance() { return playerInstance; }
-    public ActionResolver getActionResolver() { return actionResolver; }
+    // Compatibility method for UI
+    public String getCurrentAction() {
+        return currentState.name() + " (Gothic System)";
+    }
+    
+    // Legacy compatibility methods
+    public void setPlayerInstance(Player player) {
+        this.playerInstance = player;
+    }
+    
+    public Player getPlayerInstance() {
+        return playerInstance;
+    }
+    
+    public boolean wasInterrupted(UUID playerId) {
+        return currentState == PlayerState.INTERRUPTED;
+    }
+    
+    public long getQteStartTime(UUID playerId) {
+        return stateChangeTime; // Return state change time as QTE start approximation
+    }
+    
+    public boolean interrupt(InterruptionSystem.InterruptionType type, String reason) {
+        forceTransition(PlayerState.INTERRUPTED, "Interrupted: " + reason);
+        return true;
+    }
+    
+    // ===== INNER CLASSES =====
+    
+    public static class StateTransitionResult {
+        private final boolean success;
+        private final String message;
+        
+        private StateTransitionResult(boolean success, String message) {
+            this.success = success;
+            this.message = message;
+        }
+        
+        public static StateTransitionResult success(String message) {
+            return new StateTransitionResult(true, message);
+        }
+        
+        public static StateTransitionResult failed(String message) {
+            return new StateTransitionResult(false, message);
+        }
+        
+        public boolean isSuccess() { return success; }
+        public String getMessage() { return message; }
+    }
+    
+    public static class StateTransitionEvent {
+        private final UUID playerId;
+        private final PlayerState oldState;
+        private final PlayerState newState;
+        private final String reason;
+        private final long timestamp;
+        
+        public StateTransitionEvent(UUID playerId, PlayerState oldState, PlayerState newState, String reason) {
+            this.playerId = playerId;
+            this.oldState = oldState;
+            this.newState = newState;
+            this.reason = reason;
+            this.timestamp = System.currentTimeMillis();
+        }
+        
+        public UUID getPlayerId() { return playerId; }
+        public PlayerState getOldState() { return oldState; }
+        public PlayerState getNewState() { return newState; }
+        public String getReason() { return reason; }
+        public long getTimestamp() { return timestamp; }
+    }
+    
+    public static class StateEvent {
+        private final String type;
+        private final Object data;
+        private final long timestamp;
+        
+        public StateEvent(String type, Object data) {
+            this.type = type;
+            this.data = data;
+            this.timestamp = System.currentTimeMillis();
+        }
+        
+        public String getType() { return type; }
+        public Object getData() { return data; }
+        public long getTimestamp() { return timestamp; }
+    }
+    
+    public static class QTEResult {
+        private final boolean success;
+        private final boolean perfect;
+        private final String message;
+        private final float efficiency;
+        
+        private QTEResult(boolean success, boolean perfect, String message, float efficiency) {
+            this.success = success;
+            this.perfect = perfect;
+            this.message = message;
+            this.efficiency = efficiency;
+        }
+        
+        public static QTEResult perfect(String message) {
+            return new QTEResult(true, true, message, 1.0f);
+        }
+        
+        public static QTEResult great(String message) {
+            return new QTEResult(true, false, message, 0.9f);
+        }
+        
+        public static QTEResult good(String message) {
+            return new QTEResult(true, false, message, 0.7f);
+        }
+        
+        public static QTEResult ok(String message) {
+            return new QTEResult(true, false, message, 0.5f);
+        }
+        
+        public static QTEResult missed(String message) {
+            return new QTEResult(false, false, message, 0.0f);
+        }
+        
+        public static QTEResult failed(String message) {
+            return new QTEResult(false, false, message, 0.0f);
+        }
+        
+        public boolean isSuccess() { return success; }
+        public boolean isPerfect() { return perfect; }
+        public String getMessage() { return message; }
+        public float getEfficiency() { return efficiency; }
+    }
 }

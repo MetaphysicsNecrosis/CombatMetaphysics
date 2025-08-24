@@ -116,6 +116,16 @@ public class ResourceManager {
             amount, playerId, currentMana, reservedMana);
     }
     
+    // Compatibility methods for new state machine
+    public boolean canSpendMana(int amount) {
+        return currentMana >= amount;
+    }
+    
+    public void loseReservedMana(String reason) {
+        LOGGER.debug("Lost {} reserved mana for player {} (reason: {})", reservedMana, playerId, reason);
+        reservedMana = 0f; // Lose all reserved mana
+    }
+    
     // Stamina operations
     public boolean canUseStamina(float amount) {
         return currentStamina >= amount;

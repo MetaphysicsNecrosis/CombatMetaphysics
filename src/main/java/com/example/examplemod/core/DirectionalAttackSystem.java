@@ -1,5 +1,10 @@
 package com.example.examplemod.core;
 
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.Vec3;
+
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -149,9 +154,9 @@ public class DirectionalAttackSystem {
     }
     
     /**
-     * Выполняет атаку (при отпускании кнопки)
+     * Выполняет атаку (при отпускании кнопки) с реальными коллизиями
      */
-    public AttackResult executeAttack(UUID playerId) {
+    public AttackResult executeAttack(UUID playerId, Player player) {
         AttackData attackData = activeAttacks.get(playerId);
         if (attackData == null || !attackData.isCharging()) {
             return new AttackResult(false, "No charging attack found", 0, 0, false);
@@ -160,7 +165,6 @@ public class DirectionalAttackSystem {
         // Рассчитываем параметры атаки
         float baseDamage = attackData.getDirection().getBaseDamage();
         float chargeMultiplier = attackData.getChargeMultiplier();
-        float finalDamage = baseDamage * chargeMultiplier;
         
         float staminaCost = attackData.getDirection().getStaminaCost();
         if (attackData.isChargedAttack()) {
@@ -173,11 +177,82 @@ public class DirectionalAttackSystem {
             return new AttackResult(false, "Insufficient stamina", 0, 0, false);
         }
         
+        // НОВОЕ: Выполняем collision sweep для реального попадания
+        WeaponColliderSystem.SwingContext swingContext = new WeaponColliderSystem.SwingContext(
+            player, attackData.getDirection(), chargeMultiplier
+        );
+        
+        WeaponColliderSystem.HitResult hitResult = WeaponColliderSystem.performCollisionSweep(swingContext);
+        
         // Помечаем атаку как выполняемую
         attackData.markAsExecuting(System.currentTimeMillis());
         
-        return new AttackResult(true, "Attack executed", finalDamage, 
-            attackData.getKnockbackMultiplier(), attackData.causesVulnerability());
+        if (hitResult.hasHits()) {
+            // Применяем урон ко всем пораженным целям
+            int hitCount = applyDamageToTargets(hitResult, baseDamage, chargeMultiplier, attackData);
+            
+            return new AttackResult(true, 
+                String.format("Attack hit %d targets", hitCount), 
+                baseDamage * chargeMultiplier,
+                attackData.getKnockbackMultiplier(), 
+                attackData.causesVulnerability());
+        } else {
+            return new AttackResult(true, "Attack missed - no targets in range", 
+                baseDamage * chargeMultiplier,
+                attackData.getKnockbackMultiplier(), 
+                attackData.causesVulnerability());
+        }
+    }
+    
+    /**
+     * Применяет урон к найденным целям с учетом collision данных
+     */
+    private int applyDamageToTargets(WeaponColliderSystem.HitResult hitResult, 
+                                   float baseDamage, float chargeMultiplier, AttackData attackData) {
+        int hitCount = 0;
+        
+        for (Entity target : hitResult.getHitTargets()) {
+            if (!(target instanceof LivingEntity livingTarget)) {
+                continue;
+            }
+            
+            try {
+                // Рассчитываем финальный урон с учетом коллизии
+                double collisionMultiplier = hitResult.getDamageMultiplier(target);
+                float finalDamage = (float) (baseDamage * chargeMultiplier * collisionMultiplier);
+                
+                // Учитываем специальные свойства направления атаки
+                if (attackData.getDirection().ignoresSomeArmor()) {
+                    finalDamage *= 1.2f; // THRUST_ATTACK игнорирует часть брони
+                }
+                
+                // Применяем урон
+                livingTarget.hurt(livingTarget.damageSources().playerAttack((Player) null), finalDamage);
+                
+                // Применяем knockback
+                if (attackData.causesVulnerability()) {
+                    applyKnockback(livingTarget, attackData.getKnockbackMultiplier());
+                }
+                
+                hitCount++;
+                
+            } catch (Exception e) {
+                // Логируем ошибку но продолжаем с другими целями
+                System.err.println("Error applying damage to target: " + e.getMessage());
+            }
+        }
+        
+        return hitCount;
+    }
+    
+    /**
+     * Применяет knockback к цели
+     */
+    private void applyKnockback(LivingEntity target, float knockbackMultiplier) {
+        if (knockbackMultiplier > 1.0f) {
+            Vec3 knockbackVector = target.getLookAngle().scale(-knockbackMultiplier * 0.5);
+            target.setDeltaMovement(target.getDeltaMovement().add(knockbackVector));
+        }
     }
     
     /**

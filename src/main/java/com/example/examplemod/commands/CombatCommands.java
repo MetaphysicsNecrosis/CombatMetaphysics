@@ -4,9 +4,14 @@ import com.example.examplemod.CombatMetaphysics;
 import com.example.examplemod.client.qte.QTEType;
 import com.example.examplemod.client.qte.QTEClientManager;
 import com.example.examplemod.client.qte.OSUStyleQTEEvent;
+import com.example.examplemod.client.CombatClientManager;
 import com.example.examplemod.client.CombatHUDRenderer;
 import com.example.examplemod.commands.TestMeteorStrikeCommand;
 import com.example.examplemod.util.BlockProtectionRegistry;
+import com.example.examplemod.core.*;
+import com.example.examplemod.core.GothicAttackSystem.AttackDirection;
+import com.example.examplemod.core.GothicAttackSystem.AttackResult;
+import com.example.examplemod.client.gui.CombatTestGUI;
 // Старые импорты удалены - используем новую Event-Driven систему
 // SINGLEPLAYER: Removed server imports
 import com.mojang.brigadier.CommandDispatcher;
@@ -39,6 +44,9 @@ public class CombatCommands {
                 )
                 .then(Commands.literal("resources")
                     .executes(CombatCommands::debugResources)
+                )
+                .then(Commands.literal("state_display")
+                    .executes(CombatCommands::debugStateDisplay)
                 )
             )
             .then(Commands.literal("test")
@@ -93,16 +101,34 @@ public class CombatCommands {
                 )
                 .then(Commands.literal("melee")
                     .then(Commands.literal("left")
-                        .executes(ctx -> testMeleeAttack(ctx, "LEFT_ATTACK"))
+                        .executes(ctx -> testMeleeAttackNew(ctx, DirectionalAttackSystem.AttackDirection.LEFT_ATTACK))
                     )
                     .then(Commands.literal("right")
-                        .executes(ctx -> testMeleeAttack(ctx, "RIGHT_ATTACK"))
+                        .executes(ctx -> testMeleeAttackNew(ctx, DirectionalAttackSystem.AttackDirection.RIGHT_ATTACK))
                     )
                     .then(Commands.literal("top")
-                        .executes(ctx -> testMeleeAttack(ctx, "TOP_ATTACK"))
+                        .executes(ctx -> testMeleeAttackNew(ctx, DirectionalAttackSystem.AttackDirection.TOP_ATTACK))
                     )
                     .then(Commands.literal("thrust")
-                        .executes(ctx -> testMeleeAttack(ctx, "THRUST_ATTACK"))
+                        .executes(ctx -> testMeleeAttackNew(ctx, DirectionalAttackSystem.AttackDirection.THRUST_ATTACK))
+                    )
+                )
+                .then(Commands.literal("collision")
+                    .then(Commands.literal("test")
+                        .then(Commands.argument("direction", IntegerArgumentType.integer(0, 3))
+                            .executes(CombatCommands::testWeaponCollision)
+                        )
+                    )
+                    .then(Commands.literal("spawn_mobs")
+                        .then(Commands.argument("count", IntegerArgumentType.integer(1, 20))
+                            .executes(CombatCommands::spawnTestMobs)
+                        )
+                    )
+                    .then(Commands.literal("performance")
+                        .executes(CombatCommands::testCollisionPerformance)
+                    )
+                    .then(Commands.literal("gui")
+                        .executes(CombatCommands::openTestGUI)
                     )
                 )
                 .then(Commands.literal("defense")
@@ -301,18 +327,281 @@ public class CombatCommands {
         return 0;
     }
     
-    private static int testMeleeAttack(CommandContext<CommandSourceStack> context, String direction) {
-        context.getSource().sendFailure(Component.literal("УСТАРЕВШАЯ КОМАНДА! Используйте новую Event-Driven систему: /test_meteor_strike"));
+    /**
+     * НОВЫЙ метод тестирования ближнего боя с реальными коллизиями
+     */
+    private static int testMeleeAttackNew(CommandContext<CommandSourceStack> context, DirectionalAttackSystem.AttackDirection direction) {
+        try {
+            if (context.getSource().isPlayer()) {
+                var player = context.getSource().getPlayerOrException();
+                UUID playerId = player.getUUID();
+                
+                // Получаем PlayerStateMachine для SINGLEPLAYER
+                PlayerStateMachine stateMachine = CombatClientManager.getInstance().getPlayerState(playerId);
+                if (stateMachine == null) {
+                    context.getSource().sendFailure(Component.literal("Combat state machine not initialized!"));
+                    return 0;
+                }
+                
+                // Gothic Attack System - direct execution
+                AttackDirection gothicDir = convertToGothicDirection(direction);
+                AttackResult result = stateMachine.startGothicAttack(gothicDir);
+                
+                if (!result.isSuccess()) {
+                    context.getSource().sendFailure(Component.literal("Gothic attack failed: " + result.getMessage()));
+                    return 0;
+                }
+                
+                // Wait for attack sequence to complete
+                try {
+                    Thread.sleep(800); // Gothic 3-phase attack duration
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                
+                // Return to peaceful state after attack
+                stateMachine.transitionTo(PlayerState.PEACEFUL, "command test completed");
+                
+                if (result.isSuccess()) {
+                    String comboText = result.isCombo() ? " [COMBO x" + result.getComboLength() + "]" : "";
+                    context.getSource().sendSuccess(() -> Component.literal(
+                        String.format("✓ Gothic %s attack: %.1f damage%s (%s)", 
+                            gothicDir.name(), result.getDamage(), comboText, result.getMessage())
+                    ), false);
+                    
+                    // Log details for debugging
+                    CombatMetaphysics.LOGGER.info("Gothic attack test - Direction: {}, Damage: {}, Message: {}", 
+                        gothicDir, result.getDamage(), result.getMessage());
+                } else {
+                    context.getSource().sendFailure(Component.literal(
+                        "Gothic attack failed: " + result.getMessage()
+                    ));
+                }
+                
+                return 1;
+            }
+        } catch (Exception e) {
+            context.getSource().sendFailure(Component.literal("Melee test error: " + e.getMessage()));
+            CombatMetaphysics.LOGGER.error("Failed to test melee attack", e);
+        }
+        return 0;
+    }
+    
+    /**
+     * Тестирование системы коллизий оружия
+     */
+    private static int testWeaponCollision(CommandContext<CommandSourceStack> context) {
+        try {
+            if (context.getSource().isPlayer()) {
+                var player = context.getSource().getPlayerOrException();
+                int directionInt = IntegerArgumentType.getInteger(context, "direction");
+                
+                DirectionalAttackSystem.AttackDirection direction = switch (directionInt) {
+                    case 0 -> DirectionalAttackSystem.AttackDirection.LEFT_ATTACK;
+                    case 1 -> DirectionalAttackSystem.AttackDirection.RIGHT_ATTACK;
+                    case 2 -> DirectionalAttackSystem.AttackDirection.TOP_ATTACK;
+                    case 3 -> DirectionalAttackSystem.AttackDirection.THRUST_ATTACK;
+                    default -> DirectionalAttackSystem.AttackDirection.LEFT_ATTACK;
+                };
+                
+                // Создаем контекст для collision test
+                WeaponColliderSystem.SwingContext swingContext = new WeaponColliderSystem.SwingContext(
+                    player, direction, 1.0f // без charge multiplier для теста
+                );
+                
+                long startTime = System.nanoTime();
+                
+                // Выполняем collision sweep
+                WeaponColliderSystem.HitResult hitResult = WeaponColliderSystem.performCollisionSweep(swingContext);
+                
+                long duration = System.nanoTime() - startTime;
+                double durationMs = duration / 1_000_000.0;
+                
+                if (hitResult.hasHits()) {
+                    context.getSource().sendSuccess(() -> Component.literal(
+                        String.format("✓ Collision test: %d hits found in %.2fms", 
+                            hitResult.getHitTargets().size(), durationMs)
+                    ), false);
+                    
+                    // Показываем детали каждого попадания
+                    for (int i = 0; i < hitResult.getHitTargets().size(); i++) {
+                        var target = hitResult.getHitTargets().get(i);
+                        double distance = hitResult.getDistance(target);
+                        double damageMultiplier = hitResult.getDamageMultiplier(target);
+                        
+                        // Делаем переменные effectively final для lambda
+                        final int hitNumber = i + 1;
+                        final String targetName = target.getName().getString();
+                        final double finalDistance = distance;
+                        final double finalDamageMultiplier = damageMultiplier;
+                        
+                        context.getSource().sendSuccess(() -> Component.literal(
+                            String.format("  Hit %d: %s (dist: %.1f, dmg: %.2fx)", 
+                                hitNumber, targetName, finalDistance, finalDamageMultiplier)
+                        ), false);
+                    }
+                } else {
+                    context.getSource().sendSuccess(() -> Component.literal(
+                        String.format("○ Collision test: No hits (%.2fms)", durationMs)
+                    ), false);
+                }
+                
+                // Логируем производительность
+                CombatMetaphysics.LOGGER.info("Collision test - Direction: {}, Hits: {}, Duration: {:.2f}ms", 
+                    direction, hitResult.getHitTargets().size(), durationMs);
+                
+                return 1;
+            }
+        } catch (Exception e) {
+            context.getSource().sendFailure(Component.literal("Collision test error: " + e.getMessage()));
+            CombatMetaphysics.LOGGER.error("Failed to test weapon collision", e);
+        }
+        return 0;
+    }
+    
+    /**
+     * Создание мобов для тестирования коллизий
+     */
+    private static int spawnTestMobs(CommandContext<CommandSourceStack> context) {
+        try {
+            if (context.getSource().isPlayer()) {
+                var player = context.getSource().getPlayerOrException();
+                var level = context.getSource().getLevel();
+                int count = IntegerArgumentType.getInteger(context, "count");
+                
+                int spawned = 0;
+                var playerPos = player.position();
+                
+                for (int i = 0; i < count; i++) {
+                    // Спавним зомби по кругу вокруг игрока
+                    double angle = (2 * Math.PI * i) / count;
+                    double distance = 3.0 + Math.random() * 2.0; // 3-5 блоков от игрока
+                    
+                    double x = playerPos.x + Math.cos(angle) * distance;
+                    double y = playerPos.y;
+                    double z = playerPos.z + Math.sin(angle) * distance;
+                    
+                    // Ищем подходящую высоту
+                    var blockPos = new BlockPos((int)x, (int)y, (int)z);
+                    while (level.getBlockState(blockPos).isSolid() && blockPos.getY() < 256) {
+                        blockPos = blockPos.above();
+                        y++;
+                    }
+                    
+                    try {
+                        // Создаем зомби
+                        var zombie = new net.minecraft.world.entity.monster.Zombie(
+                            net.minecraft.world.entity.EntityType.ZOMBIE, level
+                        );
+                        
+                        zombie.setPos(x, y, z);
+                        zombie.setCustomName(Component.literal("Test Target " + (i + 1)));
+                        zombie.setCustomNameVisible(true);
+                        
+                        if (level.addFreshEntity(zombie)) {
+                            spawned++;
+                        }
+                    } catch (Exception e) {
+                        CombatMetaphysics.LOGGER.warn("Failed to spawn test mob {}: {}", i, e.getMessage());
+                    }
+                }
+                
+                // Делаем переменную effectively final для lambda
+                final int finalSpawned = spawned;
+                
+                context.getSource().sendSuccess(() -> Component.literal(
+                    String.format("Spawned %d test mobs around you for collision testing", finalSpawned)
+                ), false);
+                
+                CombatMetaphysics.LOGGER.info("Spawned {} test mobs for collision testing", finalSpawned);
+                return 1;
+            }
+        } catch (Exception e) {
+            context.getSource().sendFailure(Component.literal("Mob spawn error: " + e.getMessage()));
+            CombatMetaphysics.LOGGER.error("Failed to spawn test mobs", e);
+        }
+        return 0;
+    }
+    
+    private static AttackDirection convertToGothicDirection(DirectionalAttackSystem.AttackDirection direction) {
+        return switch (direction) {
+            case LEFT_ATTACK -> AttackDirection.LEFT;
+            case RIGHT_ATTACK -> AttackDirection.RIGHT;
+            case TOP_ATTACK -> AttackDirection.TOP;
+            case THRUST_ATTACK -> AttackDirection.THRUST;
+        };
+    }
+    
+    /**
+     * Тест производительности системы коллизий
+     */
+    private static int testCollisionPerformance(CommandContext<CommandSourceStack> context) {
+        try {
+            if (context.getSource().isPlayer()) {
+                var player = context.getSource().getPlayerOrException();
+                
+                context.getSource().sendSuccess(() -> Component.literal("Starting collision performance test..."), false);
+                
+                int iterations = 100;
+                long totalTime = 0;
+                int totalHits = 0;
+                
+                // Тестируем все направления атак
+                DirectionalAttackSystem.AttackDirection[] directions = DirectionalAttackSystem.AttackDirection.values();
+                
+                for (int i = 0; i < iterations; i++) {
+                    DirectionalAttackSystem.AttackDirection direction = directions[i % directions.length];
+                    
+                    WeaponColliderSystem.SwingContext swingContext = new WeaponColliderSystem.SwingContext(
+                        player, direction, 1.0f + (float)Math.random() // random charge
+                    );
+                    
+                    long startTime = System.nanoTime();
+                    WeaponColliderSystem.HitResult hitResult = WeaponColliderSystem.performCollisionSweep(swingContext);
+                    long duration = System.nanoTime() - startTime;
+                    
+                    totalTime += duration;
+                    totalHits += hitResult.getHitTargets().size();
+                }
+                
+                double avgTimeMs = (totalTime / iterations) / 1_000_000.0;
+                double avgHits = (double) totalHits / iterations;
+                
+                // Получаем статистику системы коллизий
+                var performanceStats = WeaponColliderSystem.getPerformanceStats();
+                
+                context.getSource().sendSuccess(() -> Component.literal(
+                    String.format("Performance test completed (%d iterations):", iterations)
+                ), false);
+                context.getSource().sendSuccess(() -> Component.literal(
+                    String.format("  Average time: %.3fms per collision check", avgTimeMs)
+                ), false);
+                context.getSource().sendSuccess(() -> Component.literal(
+                    String.format("  Average hits: %.1f targets per check", avgHits)
+                ), false);
+                context.getSource().sendSuccess(() -> Component.literal(
+                    String.format("  Cache stats: %s", performanceStats.toString())
+                ), false);
+                
+                CombatMetaphysics.LOGGER.info("Collision performance test - {} iterations, avg {:.3f}ms, avg {:.1f} hits", 
+                    iterations, avgTimeMs, avgHits);
+                
+                return 1;
+            }
+        } catch (Exception e) {
+            context.getSource().sendFailure(Component.literal("Performance test error: " + e.getMessage()));
+            CombatMetaphysics.LOGGER.error("Failed to run collision performance test", e);
+        }
         return 0;
     }
     
     private static int testDefense(CommandContext<CommandSourceStack> context, String defenseType) {
-        context.getSource().sendFailure(Component.literal("УСТАРЕВШАЯ КОМАНДА! Используйте новую Event-Driven систему: /test_meteor_strike"));
+        context.getSource().sendFailure(Component.literal("Defense testing will be implemented next"));
         return 0;
     }
     
     private static int testInterrupt(CommandContext<CommandSourceStack> context, String interruptType) {
-        context.getSource().sendFailure(Component.literal("УСТАРЕВШАЯ КОМАНДА! Используйте новую Event-Driven систему: /test_meteor_strike"));
+        context.getSource().sendFailure(Component.literal("Interrupt testing will be implemented next"));
         return 0;
     }
     
@@ -633,5 +922,125 @@ public class CombatCommands {
             context.getSource().sendFailure(Component.literal("Set threshold error: " + e.getMessage()));
         }
         return 1;
+    }
+    
+    /**
+     * Debug команда для проверки отображения состояний в HUD
+     */
+    private static int debugStateDisplay(CommandContext<CommandSourceStack> context) {
+        try {
+            if (context.getSource().isPlayer()) {
+                var player = context.getSource().getPlayerOrException();
+                UUID playerId = player.getUUID();
+                
+                // Получаем или создаем PlayerStateMachine
+                PlayerStateMachine stateMachine = CombatClientManager.getInstance().getPlayerState(playerId);
+                if (stateMachine == null) {
+                    context.getSource().sendFailure(Component.literal("State machine not found! Creating new one..."));
+                    
+                    // Принудительно создаем state machine
+                    var resourceManager = CombatClientManager.getInstance().getPlayerResources(playerId);
+                    stateMachine = PlayerStateMachine.getInstance(playerId, resourceManager);
+                    
+                    if (stateMachine == null) {
+                        context.getSource().sendFailure(Component.literal("Failed to create state machine!"));
+                        return 0;
+                    }
+                }
+                
+                // Получаем текущее состояние
+                PlayerState currentState = stateMachine.getCurrentState();
+                long timeInState = stateMachine.getTimeInCurrentState();
+                String currentAction = stateMachine.getCurrentAction();
+                
+                // Отчет о состоянии
+                context.getSource().sendSuccess(() -> Component.literal("=== State Display Debug ==="), false);
+                context.getSource().sendSuccess(() -> Component.literal(
+                    String.format("Current State: %s (color: 0x%08X)", 
+                        currentState.name(), getStateColor(currentState))
+                ), false);
+                context.getSource().sendSuccess(() -> Component.literal(
+                    String.format("Time in State: %.1fs", timeInState / 1000.0f)
+                ), false);
+                context.getSource().sendSuccess(() -> Component.literal(
+                    String.format("Current Action: %s", currentAction.isEmpty() ? "NONE" : currentAction)
+                ), false);
+                
+                // Информация о ресурсах
+                var resourceManager = stateMachine.getResourceManager();
+                if (resourceManager != null) {
+                    context.getSource().sendSuccess(() -> Component.literal(
+                        String.format("Mana: %.0f/%.0f (reserved: %.0f)",
+                            resourceManager.getCurrentMana(), resourceManager.getMaxMana(),
+                            resourceManager.getReservedMana())
+                    ), false);
+                    context.getSource().sendSuccess(() -> Component.literal(
+                        String.format("Stamina: %.0f/%.0f",
+                            resourceManager.getCurrentStamina(), resourceManager.getMaxStamina())
+                    ), false);
+                } else {
+                    context.getSource().sendSuccess(() -> Component.literal("Resource Manager: NULL"), false);
+                }
+                
+                // Collision система stats
+                var perfStats = WeaponColliderSystem.getPerformanceStats();
+                context.getSource().sendSuccess(() -> Component.literal(
+                    String.format("Collision Cache: %s profiles, %s frames",
+                        perfStats.getOrDefault("cachedProfiles", 0),
+                        perfStats.getOrDefault("totalFrames", 0))
+                ), false);
+                
+                // Инструкции
+                context.getSource().sendSuccess(() -> Component.literal(""), false);
+                context.getSource().sendSuccess(() -> Component.literal("✓ State display should now be visible in top-left corner of screen"), false);
+                context.getSource().sendSuccess(() -> Component.literal("  Use F3 to toggle debug info if needed"), false);
+                context.getSource().sendSuccess(() -> Component.literal("  Try different states with melee/collision test commands"), false);
+                
+                CombatMetaphysics.LOGGER.info("State display debug - State: {}, Time: {}ms, Action: {}", 
+                    currentState, timeInState, currentAction);
+                
+                return 1;
+            }
+        } catch (Exception e) {
+            context.getSource().sendFailure(Component.literal("State display debug error: " + e.getMessage()));
+            CombatMetaphysics.LOGGER.error("Failed to debug state display", e);
+        }
+        return 0;
+    }
+    
+    /**
+     * Открывает GUI интерфейс для тестирования боевой системы
+     */
+    private static int openTestGUI(CommandContext<CommandSourceStack> context) {
+        try {
+            if (context.getSource().isPlayer()) {
+                // Открываем GUI на клиентской стороне
+                net.minecraft.client.Minecraft.getInstance().setScreen(new CombatTestGUI());
+                
+                context.getSource().sendSuccess(() -> Component.literal(
+                    "✓ Combat Test GUI opened! Use the interface to test attacks with collisions."
+                ), false);
+                
+                return 1;
+            } else {
+                context.getSource().sendFailure(Component.literal("GUI can only be opened by players!"));
+            }
+        } catch (Exception e) {
+            context.getSource().sendFailure(Component.literal("Failed to open GUI: " + e.getMessage()));
+            CombatMetaphysics.LOGGER.error("Failed to open Combat Test GUI", e);
+        }
+        return 0;
+    }
+    
+    /**
+     * Вспомогательный метод для получения цвета состояния
+     */
+    private static int getStateColor(PlayerState state) {
+        return switch (state.getCombatType()) {
+            case MAGIC -> 0xFF64B5F6;     // Синий для магии
+            case MELEE -> 0xFFFF6B35;     // Оранжевый для ближнего боя
+            case DEFENSIVE -> 0xFF4CAF50; // Зеленый для защиты
+            case NONE -> state == PlayerState.INTERRUPTED ? 0xFFFF0000 : 0xFFFFFFFF; // Красный для прерывания, белый для остального
+        };
     }
 }

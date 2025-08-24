@@ -198,8 +198,9 @@ public class InterruptionSystem {
         activeInterruptions.put(targetId, request);
         
         // Переводим игрока в состояние прерывания
-        boolean stateChanged = targetStateMachine.tryTransition(PlayerState.INTERRUPTED, 
-            "Interrupted by " + request.getType().getDescription());
+        PlayerStateMachine.StateTransitionResult result = targetStateMachine.transitionTo(PlayerState.INTERRUPTED, 
+            "Interrupted by " + request.getType().getDescription(), 0);
+        boolean stateChanged = result.isSuccess();
         
         if (stateChanged) {
             return new InterruptionResult(true, request.getType(), null,
@@ -569,8 +570,9 @@ public class InterruptionSystem {
         };
         
         // Переводим игрока в состояние прерывания
-        boolean stateChanged = targetStateMachine.tryTransition(interruptedState, 
-            "Interrupted by " + request.getType().getDescription());
+        PlayerStateMachine.StateTransitionResult result = targetStateMachine.transitionTo(interruptedState, 
+            "Interrupted by " + request.getType().getDescription(), 0);
+        boolean stateChanged = result.isSuccess();
         
         if (stateChanged) {
             return new InterruptionResult(true, request.getType(), null,

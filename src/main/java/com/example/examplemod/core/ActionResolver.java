@@ -80,7 +80,7 @@ public class ActionResolver {
         public ActionType getLosingAction() { return losingAction; }
     }
     
-    private final Map<UUID, ActionRequest> currentActions = new HashMap<>();
+    private final Map<UUID, ActionRequest> currentActions = new ConcurrentHashMap<>();
     
     /**
      * Проверяет возможность выполнения действия с учетом приоритетов
@@ -327,9 +327,8 @@ public class ActionResolver {
         // В процессе произнесения заклинания игрок уязвим для прерываний
         String spellType = params.length > 0 ? (String) params[0] : "basic_spell";
         
-        // Проверяем, не был ли игрок прерван
-        if (stateMachine.wasInterrupted(playerId)) {
-            // При прерывании зарезервированная мана НЕ возвращается (двухслойная система)
+        // Check if player was interrupted (Gothic system)
+        if (stateMachine.getCurrentState() == PlayerState.INTERRUPTED) {
             return ActionExecutionResult.failure("Произнесение заклинания прервано");
         }
         
@@ -358,8 +357,8 @@ public class ActionResolver {
         // QTE для переходов между заклинаниями в комбо
         long inputTimestamp = params.length > 0 ? (Long) params[0] : System.currentTimeMillis();
         
-        // Получаем timing window для QTE (обычно 200-500ms)
-        long qteStartTime = stateMachine.getQteStartTime(playerId);
+        // Get QTE timing (simplified for Gothic system)
+        long qteStartTime = stateMachine.getStateChangeTime();
         long timingDiff = Math.abs(inputTimestamp - qteStartTime);
         
         // Оценка качества QTE

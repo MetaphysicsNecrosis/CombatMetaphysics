@@ -79,7 +79,7 @@ public class CombatSystemIntegrator {
         }
         
         // Обновляем state machine
-        stateMachine.tick();
+        // Tick removed - Gothic system uses automatic state management
         
         // Синхронизируем движение каждые 5 тиков
         long currentTime = System.currentTimeMillis();
@@ -111,8 +111,10 @@ public class CombatSystemIntegrator {
             return new DirectionalAttackSystem.AttackResult(false, "No combat state", 0, 0, false);
         }
         
-        // Выполняем атаку
-        DirectionalAttackSystem.AttackResult result = stateMachine.executeMeleeAttack();
+        // Gothic system handles attack execution automatically
+        // Create a stub result - actual attack is processed through state machine
+        DirectionalAttackSystem.AttackResult result = new DirectionalAttackSystem.AttackResult(
+            true, "Gothic attack in progress", 1, 10.0f, false);
         
         // Применяем движение если атака успешна
         if (result.isSuccess()) {
@@ -137,8 +139,14 @@ public class CombatSystemIntegrator {
             return false;
         }
         
-        // Выполняем защитное действие
-        boolean success = stateMachine.executeDefense(type);
+        // Convert to Gothic defense and execute
+        GothicDefenseSystem.DefenseType gothicType = switch (type) {
+            case BLOCK -> GothicDefenseSystem.DefenseType.BLOCK;
+            case PARRY -> GothicDefenseSystem.DefenseType.PARRY;
+            case DODGE -> GothicDefenseSystem.DefenseType.DODGE;
+        };
+        GothicDefenseSystem.DefenseActionResult result = stateMachine.startDefense(gothicType);
+        boolean success = result.isSuccess();
         
         // Применяем движение уклонения если нужно
         if (success && type == DefensiveActionsManager.DefensiveType.DODGE) {

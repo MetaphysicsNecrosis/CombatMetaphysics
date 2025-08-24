@@ -1,291 +1,295 @@
 package com.example.examplemod.client.input;
 
 import com.example.examplemod.CombatMetaphysics;
-import com.example.examplemod.client.CombatClientManager;
-import com.example.examplemod.core.DirectionalAttackSystem;
-import com.example.examplemod.core.DefensiveActionsManager;
-import com.example.examplemod.core.PlayerStateMachine;
-import com.mojang.blaze3d.platform.InputConstants;
-import net.minecraft.client.KeyMapping;
+import com.example.examplemod.api.CombatController;
+import com.example.examplemod.core.*;
 import net.minecraft.client.Minecraft;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.client.event.InputEvent;
-import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
+import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.UUID;
 
 /**
- * Клиентский обработчик ввода для combat системы
- * Согласно CLAUDE.md: Gothic-style направленные атаки с удержанием кнопки
+ * Professional Combat Input Handler for Gothic Combat + QTE Magic System
+ * Handles all player input for combat actions through the new state machine API
  */
-@EventBusSubscriber(modid = CombatMetaphysics.MODID, value = Dist.CLIENT)
 public class CombatInputHandler {
     
-    // Кнопки для combat действий
-    public static final KeyMapping MAGIC_CAST_KEY = new KeyMapping(
-        "key.combatmetaphysics.magic_cast",
-        InputConstants.Type.KEYSYM,
-        GLFW.GLFW_KEY_R, // R для магии
-        "key.categories.combatmetaphysics"
-    );
-    
-    public static final KeyMapping MELEE_ATTACK_KEY = new KeyMapping(
-        "key.combatmetaphysics.melee_attack",
-        InputConstants.Type.KEYSYM,
-        GLFW.GLFW_KEY_F, // F для ближнего боя
-        "key.categories.combatmetaphysics"
-    );
-    
-    public static final KeyMapping PARRY_KEY = new KeyMapping(
-        "key.combatmetaphysics.parry",
-        InputConstants.Type.KEYSYM,
-        GLFW.GLFW_KEY_G, // G для парирования
-        "key.categories.combatmetaphysics"
-    );
-    
-    public static final KeyMapping BLOCK_KEY = new KeyMapping(
-        "key.combatmetaphysics.block",
-        InputConstants.Type.KEYSYM,
-        GLFW.GLFW_KEY_V, // V для блокирования
-        "key.categories.combatmetaphysics"
-    );
-    
-    public static final KeyMapping DODGE_KEY = new KeyMapping(
-        "key.combatmetaphysics.dodge",
-        InputConstants.Type.KEYSYM,
-        GLFW.GLFW_KEY_C, // C для уклонения
-        "key.categories.combatmetaphysics"
-    );
-    
-    // Состояние кнопок
+    // Combat state tracking
     private static boolean meleeKeyDown = false;
     private static long meleeKeyPressTime = 0;
     private static DirectionalAttackSystem.AttackDirection currentDirection = DirectionalAttackSystem.AttackDirection.LEFT_ATTACK;
     
-    @SubscribeEvent
-    public static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
-        event.register(MAGIC_CAST_KEY);
-        event.register(MELEE_ATTACK_KEY);
-        event.register(PARRY_KEY);
-        event.register(BLOCK_KEY);
-        event.register(DODGE_KEY);
-        
-        CombatMetaphysics.LOGGER.info("Combat input keys registered");
-    }
-    
-    @SubscribeEvent
-    public static void onKeyInput(InputEvent.Key event) {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || mc.screen != null) return;
+    /**
+     * Handle key press events for combat actions
+     */
+    public static void handleKeyPress(int key, Minecraft mc, CombatController controller) {
+        if (mc.player == null) return;
         
         UUID playerId = mc.player.getUUID();
-        PlayerStateMachine stateMachine = CombatClientManager.getInstance().getPlayerState(playerId);
+        PlayerStateMachine stateMachine = controller.getStateMachine(playerId);
+        if (stateMachine == null) return;
         
-        // Обработка нажатий клавиш
-        if (event.getAction() == GLFW.GLFW_PRESS) {
-            handleKeyPress(event.getKey(), playerId, stateMachine);
-        } else if (event.getAction() == GLFW.GLFW_RELEASE) {
-            handleKeyRelease(event.getKey(), playerId, stateMachine);
-        }
-    }
-    
-    private static void handleKeyPress(int key, UUID playerId, PlayerStateMachine stateMachine) {
-        try {
-            // Магическое заклинание
-            if (key == MAGIC_CAST_KEY.getKey().getValue()) {
-                handleMagicCast(playerId, stateMachine);
+        switch (key) {
+            case GLFW.GLFW_KEY_Q -> { // Left mouse button alternative
+                handleGothicAttackStart(playerId, stateMachine, GothicAttackSystem.AttackDirection.LEFT);
             }
-            
-            // Начало заряжания атаки ближнего боя (Gothic-style)
-            else if (key == MELEE_ATTACK_KEY.getKey().getValue()) {
-                handleMeleeAttackStart(playerId, stateMachine);
+            case GLFW.GLFW_KEY_E -> { // Right mouse button alternative  
+                handleGothicAttackStart(playerId, stateMachine, GothicAttackSystem.AttackDirection.RIGHT);
             }
-            
-            // Парирование
-            else if (key == PARRY_KEY.getKey().getValue()) {
-                handleDefensiveAction(playerId, stateMachine, DefensiveActionsManager.DefensiveType.PARRY);
+            case GLFW.GLFW_KEY_R -> { // Top attack
+                handleGothicAttackStart(playerId, stateMachine, GothicAttackSystem.AttackDirection.TOP);
             }
-            
-            // Блокирование
-            else if (key == BLOCK_KEY.getKey().getValue()) {
-                handleDefensiveAction(playerId, stateMachine, DefensiveActionsManager.DefensiveType.BLOCK);
+            case GLFW.GLFW_KEY_F -> { // Thrust attack
+                handleGothicAttackStart(playerId, stateMachine, GothicAttackSystem.AttackDirection.THRUST);
             }
-            
-            // Уклонение
-            else if (key == DODGE_KEY.getKey().getValue()) {
-                handleDefensiveAction(playerId, stateMachine, DefensiveActionsManager.DefensiveType.DODGE);
+            case GLFW.GLFW_KEY_LEFT_SHIFT -> { // Block
+                handleGothicDefense(playerId, stateMachine, GothicDefenseSystem.DefenseType.BLOCK);
             }
-            
-            // Направления атак (при удержании кнопки атаки)
-            else if (meleeKeyDown) {
-                handleDirectionInput(key, playerId, stateMachine);
+            case GLFW.GLFW_KEY_C -> { // Parry
+                handleGothicDefense(playerId, stateMachine, GothicDefenseSystem.DefenseType.PARRY);
             }
-            
-        } catch (Exception e) {
-            CombatMetaphysics.LOGGER.error("Error handling key press: {}", e.getMessage());
-        }
-    }
-    
-    private static void handleKeyRelease(int key, UUID playerId, PlayerStateMachine stateMachine) {
-        try {
-            // Отпускание кнопки атаки ближнего боя - выполнение атаки
-            if (key == MELEE_ATTACK_KEY.getKey().getValue() && meleeKeyDown) {
-                handleMeleeAttackExecute(playerId, stateMachine);
+            case GLFW.GLFW_KEY_SPACE -> { // Dodge
+                handleGothicDefense(playerId, stateMachine, GothicDefenseSystem.DefenseType.DODGE);
             }
-            
-        } catch (Exception e) {
-            CombatMetaphysics.LOGGER.error("Error handling key release: {}", e.getMessage());
-        }
-    }
-    
-    private static void handleMagicCast(UUID playerId, PlayerStateMachine stateMachine) {
-        if (stateMachine.getCurrentState().canTransitionTo(com.example.examplemod.core.PlayerState.MAGIC_PREPARING)) {
-            boolean success = stateMachine.startMagicPreparation("client_spell", 25f);
-            
-            CombatMetaphysics.LOGGER.info("Magic cast initiated: {} for player {}", 
-                success ? "SUCCESS" : "FAILED", playerId);
-                
-            if (success) {
-                // Можно добавить звуковые эффекты или визуальные индикаторы
-                showCombatMessage("Подготовка заклинания...");
-            } else {
-                showCombatMessage("Невозможно применить магию в данный момент");
+            case GLFW.GLFW_KEY_1 -> { // Magic spell 1
+                handleMagicCast(playerId, stateMachine, "fireball", 40);
             }
-        }
-    }
-    
-    private static void handleMeleeAttackStart(UUID playerId, PlayerStateMachine stateMachine) {
-        if (stateMachine.getCurrentState().canTransitionTo(com.example.examplemod.core.PlayerState.MELEE_PREPARING)) {
-            meleeKeyDown = true;
-            meleeKeyPressTime = System.currentTimeMillis();
-            currentDirection = DirectionalAttackSystem.AttackDirection.LEFT_ATTACK; // По умолчанию
-            
-            boolean success = stateMachine.startMeleePreparation(currentDirection);
-            
-            CombatMetaphysics.LOGGER.info("Melee charge started: {} for player {}", 
-                success ? "SUCCESS" : "FAILED", playerId);
-                
-            if (success) {
-                showCombatMessage("Заряжание атаки... (используйте WASD для выбора направления)");
-            } else {
-                meleeKeyDown = false;
-                showCombatMessage("Невозможно атаковать в данный момент");
+            case GLFW.GLFW_KEY_2 -> { // Magic spell 2
+                handleMagicCast(playerId, stateMachine, "heal", 30);
             }
-        }
-    }
-    
-    private static void handleMeleeAttackExecute(UUID playerId, PlayerStateMachine stateMachine) {
-        meleeKeyDown = false;
-        long chargeTime = System.currentTimeMillis() - meleeKeyPressTime;
-        
-        if (stateMachine.getCurrentState().isMeleeState()) {
-            var result = stateMachine.executeMeleeAttack();
-            
-            CombatMetaphysics.LOGGER.info("Melee attack executed: {} (damage: {}, charge time: {}ms) for player {}", 
-                result.isSuccess() ? "SUCCESS" : "FAILED", result.getDamage(), chargeTime, playerId);
-                
-            if (result.isSuccess()) {
-                String chargeIndicator = chargeTime > 2000 ? " [ЗАРЯЖЕН]" : "";
-                showCombatMessage(String.format("Атака выполнена! Урон: %.1f%s", result.getDamage(), chargeIndicator));
-            } else {
-                showCombatMessage("Атака не удалась: " + result.getMessage());
-            }
-        }
-    }
-    
-    private static void handleDefensiveAction(UUID playerId, PlayerStateMachine stateMachine, 
-                                            DefensiveActionsManager.DefensiveType type) {
-        if (stateMachine.getCurrentState().canTransitionTo(com.example.examplemod.core.PlayerState.DEFENSIVE_ACTION)) {
-            boolean success = stateMachine.startDefensiveAction(type);
-            
-            CombatMetaphysics.LOGGER.info("Defensive action ({}): {} for player {}", 
-                type, success ? "SUCCESS" : "FAILED", playerId);
-                
-            if (success) {
-                String actionName = switch (type) {
-                    case PARRY -> "Парирование";
-                    case BLOCK -> "Блокирование";
-                    case DODGE -> "Уклонение";
-                };
-                showCombatMessage(actionName + " активировано!");
-            } else {
-                showCombatMessage("Невозможно использовать защиту в данный момент");
-            }
-        }
-    }
-    
-    private static void handleDirectionInput(int key, UUID playerId, PlayerStateMachine stateMachine) {
-        DirectionalAttackSystem.AttackDirection newDirection = null;
-        
-        // WASD для выбора направления атаки
-        if (key == GLFW.GLFW_KEY_W) {
-            newDirection = DirectionalAttackSystem.AttackDirection.TOP_ATTACK;
-        } else if (key == GLFW.GLFW_KEY_A) {
-            newDirection = DirectionalAttackSystem.AttackDirection.LEFT_ATTACK;
-        } else if (key == GLFW.GLFW_KEY_S) {
-            newDirection = DirectionalAttackSystem.AttackDirection.THRUST_ATTACK;
-        } else if (key == GLFW.GLFW_KEY_D) {
-            newDirection = DirectionalAttackSystem.AttackDirection.RIGHT_ATTACK;
-        }
-        
-        if (newDirection != null && newDirection != currentDirection) {
-            currentDirection = newDirection;
-            
-            // Обновляем направление в системе атак
-            if (stateMachine.getCurrentState().isMeleeState()) {
-                // Можно отменить текущую атаку и начать новую с другим направлением
-                stateMachine.getAttackSystem().cancelCharging(playerId);
-                stateMachine.getAttackSystem().startCharging(playerId, newDirection);
-                
-                String directionName = switch (newDirection) {
-                    case LEFT_ATTACK -> "Левая атака (быстрая)";
-                    case RIGHT_ATTACK -> "Правая атака (средняя)";
-                    case TOP_ATTACK -> "Верхняя атака (мощная)";
-                    case THRUST_ATTACK -> "Колющая атака (пробивающая)";
-                };
-                
-                showCombatMessage("Направление: " + directionName);
+            case GLFW.GLFW_KEY_3 -> { // QTE Combo chain
+                handleQTECombo(playerId, stateMachine, "fire_storm_combo");
             }
         }
     }
     
     /**
-     * Отображает сообщение о combat действии в чате
+     * Handle key release events
+     */
+    public static void handleKeyRelease(int key, Minecraft mc, CombatController controller) {
+        if (mc.player == null) return;
+        
+        UUID playerId = mc.player.getUUID();
+        PlayerStateMachine stateMachine = controller.getStateMachine(playerId);
+        if (stateMachine == null) return;
+        
+        // No specific release handling needed for Gothic system
+        // All attacks are automatic 3-phase sequences
+    }
+    
+    // ===== GOTHIC COMBAT HANDLERS =====
+    
+    /**
+     * Handle Gothic attack initiation
+     */
+    private static void handleGothicAttackStart(UUID playerId, PlayerStateMachine stateMachine, 
+                                               GothicAttackSystem.AttackDirection direction) {
+        // Transition to combat stance if in peaceful state
+        if (stateMachine.getCurrentState() == PlayerState.PEACEFUL) {
+            stateMachine.transitionTo(PlayerState.COMBAT_STANCE, "Preparing for Gothic attack");
+        }
+        
+        // Start Gothic attack
+        GothicAttackSystem.AttackResult result = stateMachine.startGothicAttack(direction);
+        
+        CombatMetaphysics.LOGGER.info("Gothic attack {} initiated: {} for player {}", 
+            direction, result.isSuccess() ? "SUCCESS" : "FAILED", playerId);
+            
+        if (result.isSuccess()) {
+            showCombatMessage("Gothic Attack: " + direction + "!");
+            
+            if (result.isCombo()) {
+                showCombatMessage("COMBO x" + result.getComboLength() + "!");
+            }
+        } else {
+            showCombatMessage("Cannot attack: " + result.getMessage());
+        }
+    }
+    
+    /**
+     * Handle Gothic defense initiation
+     */
+    private static void handleGothicDefense(UUID playerId, PlayerStateMachine stateMachine,
+                                           GothicDefenseSystem.DefenseType defenseType) {
+        // Transition to combat stance if in peaceful state
+        if (stateMachine.getCurrentState() == PlayerState.PEACEFUL) {
+            stateMachine.transitionTo(PlayerState.COMBAT_STANCE, "Preparing for Gothic defense");
+        }
+        
+        // Start Gothic defense
+        GothicDefenseSystem.DefenseActionResult result = stateMachine.startDefense(defenseType);
+        
+        CombatMetaphysics.LOGGER.info("Gothic defense {} initiated: {} for player {}", 
+            defenseType, result.isSuccess() ? "SUCCESS" : "FAILED", playerId);
+            
+        if (result.isSuccess()) {
+            String defenseName = switch (defenseType) {
+                case BLOCK -> "Gothic Block";
+                case PARRY -> "Gothic Parry";
+                case DODGE -> "Gothic Dodge";
+            };
+            showCombatMessage(defenseName + " activated!");
+            
+            if (result.isPerfectTiming()) {
+                showCombatMessage("PERFECT TIMING!");
+            }
+        } else {
+            showCombatMessage("Cannot defend: " + result.getMessage());
+        }
+    }
+    
+    // ===== QTE MAGIC SYSTEM HANDLERS =====
+    
+    /**
+     * Handle magic spell casting
+     */
+    private static void handleMagicCast(UUID playerId, PlayerStateMachine stateMachine, 
+                                       String spellName, int manaCost) {
+        // Transition to combat stance if needed
+        if (stateMachine.getCurrentState() == PlayerState.PEACEFUL) {
+            stateMachine.transitionTo(PlayerState.COMBAT_STANCE, "Preparing magic");
+        }
+        
+        // Start magic preparation
+        boolean preparationSuccess = stateMachine.startMagicPreparation(spellName, manaCost);
+        
+        if (preparationSuccess) {
+            showCombatMessage("Preparing spell: " + spellName);
+            
+            // Auto-transition to casting after preparation
+            scheduleDelayedAction(() -> {
+                if (stateMachine.getCurrentState() == PlayerState.MAGIC_PREPARING) {
+                    boolean castingSuccess = stateMachine.startMagicCasting(spellName);
+                    if (castingSuccess) {
+                        showCombatMessage("Casting " + spellName + "...");
+                    }
+                }
+            }, 1000);
+        } else {
+            showCombatMessage("Cannot cast " + spellName + " (insufficient mana or invalid state)");
+        }
+    }
+    
+    /**
+     * Handle QTE combo chain initiation
+     */
+    private static void handleQTECombo(UUID playerId, PlayerStateMachine stateMachine, String comboName) {
+        // Start QTE transition
+        var qteFuture = stateMachine.startQTETransition(comboName, 1200);
+        
+        if (qteFuture != null) {
+            showCombatMessage("QTE COMBO: " + comboName + " - Press X when prompted!");
+            
+            // Handle QTE completion
+            qteFuture.thenAccept(result -> {
+                if (result.isSuccess()) {
+                    if (result.isPerfect()) {
+                        showCombatMessage("PERFECT QTE! +50% damage, -20% mana cost");
+                    } else {
+                        showCombatMessage("QTE Success: " + result.getMessage());
+                    }
+                } else {
+                    showCombatMessage("QTE Failed: " + result.getMessage());
+                }
+            });
+        } else {
+            showCombatMessage("Cannot start QTE combo from current state");
+        }
+    }
+    
+    /**
+     * Handle QTE input (called from external QTE system)
+     */
+    public static void handleQTEInput(UUID playerId, String input, long timing) {
+        PlayerStateMachine stateMachine = PlayerStateMachine.getInstance(playerId);
+        if (stateMachine != null) {
+            stateMachine.handleQTEInput(input, timing);
+        }
+    }
+    
+    // ===== UTILITY METHODS =====
+    
+    /**
+     * Show combat message to player
      */
     private static void showCombatMessage(String message) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player != null) {
-            mc.player.displayClientMessage(
-                net.minecraft.network.chat.Component.literal("[Combat] " + message), 
-                true // Action bar
-            );
+            mc.player.displayClientMessage(Component.literal("[Combat] " + message), false);
         }
     }
     
     /**
-     * Получает прогресс заряжания текущей атаки (0.0 - 1.0)
+     * Schedule delayed action (utility for magic casting flow)
      */
-    public static float getMeleeChargeProgress() {
-        if (!meleeKeyDown || meleeKeyPressTime == 0) return 0.0f;
+    private static void scheduleDelayedAction(Runnable action, long delayMs) {
+        new Thread(() -> {
+            try {
+                Thread.sleep(delayMs);
+                action.run();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }).start();
+    }
+    
+    // ===== LEGACY COMPATIBILITY (DEPRECATED) =====
+    
+    /**
+     * @deprecated Use Gothic attack system instead
+     */
+    @Deprecated
+    private static void handleMeleeAttackStart(UUID playerId, PlayerStateMachine stateMachine) {
+        // Redirect to Gothic system with default LEFT direction
+        handleGothicAttackStart(playerId, stateMachine, GothicAttackSystem.AttackDirection.LEFT);
+    }
+    
+    /**
+     * @deprecated Gothic system handles execution automatically
+     */
+    @Deprecated 
+    private static void handleMeleeAttackExecute(UUID playerId, PlayerStateMachine stateMachine) {
+        // No-op - Gothic system handles attack execution through automatic state transitions
+        CombatMetaphysics.LOGGER.debug("Legacy executeMeleeAttack called - Gothic system handles this automatically");
+    }
+    
+    /**
+     * @deprecated Use Gothic defense system instead
+     */
+    @Deprecated
+    private static void handleDefensiveAction(UUID playerId, PlayerStateMachine stateMachine, 
+                                            DefensiveActionsManager.DefensiveType type) {
+        // Convert and redirect to Gothic system
+        GothicDefenseSystem.DefenseType gothicType = switch (type) {
+            case BLOCK -> GothicDefenseSystem.DefenseType.BLOCK;
+            case PARRY -> GothicDefenseSystem.DefenseType.PARRY;
+            case DODGE -> GothicDefenseSystem.DefenseType.DODGE;
+        };
         
-        long elapsed = System.currentTimeMillis() - meleeKeyPressTime;
-        return Math.min(1.0f, elapsed / 2000.0f); // 2 секунды для полной зарядки
+        handleGothicDefense(playerId, stateMachine, gothicType);
     }
     
-    /**
-     * Проверяет, заряжается ли атака в данный момент
-     */
+    // ===== COMPATIBILITY METHODS FOR UI =====
+    
     public static boolean isMeleeCharging() {
-        return meleeKeyDown;
+        return false; // Gothic system doesn't use charging - instant attacks
+    }
+    
+    public static DirectionalAttackSystem.AttackDirection getCurrentDirection() {
+        return currentDirection; // Keep for UI compatibility
+    }
+    
+    public static float getMeleeChargeProgress() {
+        return 0.0f; // No charging in Gothic system
     }
     
     /**
-     * Получает текущее направление атаки
+     * @deprecated Direction input handled directly in Gothic attack methods
      */
-    public static DirectionalAttackSystem.AttackDirection getCurrentDirection() {
-        return currentDirection;
+    @Deprecated
+    private static void handleDirectionInput(int key, UUID playerId, PlayerStateMachine stateMachine) {
+        // No longer needed - Gothic attacks specify direction directly
+        CombatMetaphysics.LOGGER.debug("Legacy handleDirectionInput called - Gothic system uses direct direction specification");
     }
 }

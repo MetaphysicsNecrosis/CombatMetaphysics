@@ -16,7 +16,7 @@ public class CombatKeyBindings {
         KeyConflictContext.IN_GAME,
         KeyModifier.NONE,
         InputConstants.Type.KEYSYM,
-        GLFW.GLFW_KEY_R,
+        InputConstants.UNKNOWN.getValue(),
         CATEGORY
     );
     
@@ -25,7 +25,7 @@ public class CombatKeyBindings {
         KeyConflictContext.IN_GAME,
         KeyModifier.NONE,
         InputConstants.Type.KEYSYM,
-        GLFW.GLFW_KEY_Q,
+        InputConstants.UNKNOWN.getValue(),
         CATEGORY
     );
     
@@ -34,8 +34,8 @@ public class CombatKeyBindings {
         "key.combatmetaphysics.melee_attack",
         KeyConflictContext.IN_GAME, 
         KeyModifier.NONE,
-        InputConstants.Type.MOUSE,
-        InputConstants.MOUSE_BUTTON_LEFT,
+        InputConstants.Type.KEYSYM,
+        InputConstants.UNKNOWN.getValue(),
         CATEGORY
     );
     
@@ -44,7 +44,7 @@ public class CombatKeyBindings {
         KeyConflictContext.IN_GAME,
         KeyModifier.NONE,
         InputConstants.Type.KEYSYM,
-        GLFW.GLFW_KEY_A,
+        InputConstants.UNKNOWN.getValue(),
         CATEGORY
     );
     
@@ -53,7 +53,7 @@ public class CombatKeyBindings {
         KeyConflictContext.IN_GAME,
         KeyModifier.NONE,
         InputConstants.Type.KEYSYM,
-        GLFW.GLFW_KEY_D,
+        InputConstants.UNKNOWN.getValue(),
         CATEGORY
     );
     
@@ -62,7 +62,7 @@ public class CombatKeyBindings {
         KeyConflictContext.IN_GAME,
         KeyModifier.NONE,
         InputConstants.Type.KEYSYM,
-        GLFW.GLFW_KEY_W,
+        InputConstants.UNKNOWN.getValue(),
         CATEGORY
     );
     
@@ -71,35 +71,35 @@ public class CombatKeyBindings {
         KeyConflictContext.IN_GAME,
         KeyModifier.NONE,
         InputConstants.Type.KEYSYM,
-        GLFW.GLFW_KEY_S,
+        InputConstants.UNKNOWN.getValue(),
         CATEGORY
     );
     
     // Defensive keys
     public static final KeyMapping BLOCK = new KeyMapping(
-        "key.combatmetaphysics.block",
+        "key.combatmetaphysics.legacy_block",
         KeyConflictContext.IN_GAME,
         KeyModifier.NONE,
-        InputConstants.Type.MOUSE,
-        InputConstants.MOUSE_BUTTON_RIGHT,
+        InputConstants.Type.KEYSYM,
+        InputConstants.UNKNOWN.getValue(),
         CATEGORY
     );
     
     public static final KeyMapping PARRY = new KeyMapping(
-        "key.combatmetaphysics.parry",
+        "key.combatmetaphysics.legacy_parry",
         KeyConflictContext.IN_GAME,
         KeyModifier.NONE,
         InputConstants.Type.KEYSYM,
-        GLFW.GLFW_KEY_F,
+        InputConstants.UNKNOWN.getValue(),
         CATEGORY
     );
     
     public static final KeyMapping DODGE = new KeyMapping(
-        "key.combatmetaphysics.dodge",
+        "key.combatmetaphysics.legacy_dodge",
         KeyConflictContext.IN_GAME,
         KeyModifier.NONE,
         InputConstants.Type.KEYSYM,
-        GLFW.GLFW_KEY_SPACE,
+        InputConstants.UNKNOWN.getValue(),
         CATEGORY
     );
     
@@ -109,7 +109,62 @@ public class CombatKeyBindings {
         KeyConflictContext.IN_GAME,
         KeyModifier.NONE,
         InputConstants.Type.KEYSYM,
-        GLFW.GLFW_KEY_E,
+        InputConstants.UNKNOWN.getValue(),
+        CATEGORY
+    );
+    
+    // НОВЫЕ КЛАВИШИ ТЕСТИРОВАНИЯ АТАК
+    public static final KeyMapping TEST_HORIZONTAL_SLASH = new KeyMapping(
+        "key.combatmetaphysics.test_horizontal",
+        KeyConflictContext.IN_GAME,
+        KeyModifier.NONE,
+        InputConstants.Type.KEYSYM,
+        InputConstants.UNKNOWN.getValue(),
+        CATEGORY
+    );
+    
+    public static final KeyMapping TEST_VERTICAL_SLASH = new KeyMapping(
+        "key.combatmetaphysics.test_vertical",
+        KeyConflictContext.IN_GAME,
+        KeyModifier.NONE,
+        InputConstants.Type.KEYSYM,
+        InputConstants.UNKNOWN.getValue(),
+        CATEGORY
+    );
+    
+    public static final KeyMapping TEST_DIAGONAL_COMBO = new KeyMapping(
+        "key.combatmetaphysics.test_diagonal",
+        KeyConflictContext.IN_GAME,
+        KeyModifier.NONE,
+        InputConstants.Type.KEYSYM,
+        InputConstants.UNKNOWN.getValue(),
+        CATEGORY
+    );
+    
+    public static final KeyMapping TEST_THRUST_ATTACK = new KeyMapping(
+        "key.combatmetaphysics.test_thrust",
+        KeyConflictContext.IN_GAME,
+        KeyModifier.NONE,
+        InputConstants.Type.KEYSYM,
+        InputConstants.UNKNOWN.getValue(),
+        CATEGORY
+    );
+    
+    public static final KeyMapping SPAWN_TEST_MOBS = new KeyMapping(
+        "key.combatmetaphysics.spawn_mobs",
+        KeyConflictContext.IN_GAME,
+        KeyModifier.NONE,
+        InputConstants.Type.KEYSYM,
+        InputConstants.UNKNOWN.getValue(),
+        CATEGORY
+    );
+    
+    public static final KeyMapping CLEAR_TEST_MOBS = new KeyMapping(
+        "key.combatmetaphysics.clear_mobs",
+        KeyConflictContext.IN_GAME,
+        KeyModifier.NONE,
+        InputConstants.Type.KEYSYM,
+        InputConstants.UNKNOWN.getValue(),
         CATEGORY
     );
     
@@ -136,6 +191,31 @@ public class CombatKeyBindings {
     
     public static boolean isQteConfirmPressed() {
         return QTE_CONFIRM.consumeClick();
+    }
+    
+    // НОВЫЕ методы для тестовых клавиш
+    public static boolean isTestHorizontalPressed() {
+        return TEST_HORIZONTAL_SLASH.consumeClick();
+    }
+    
+    public static boolean isTestVerticalPressed() {
+        return TEST_VERTICAL_SLASH.consumeClick();
+    }
+    
+    public static boolean isTestDiagonalPressed() {
+        return TEST_DIAGONAL_COMBO.consumeClick();
+    }
+    
+    public static boolean isTestThrustPressed() {
+        return TEST_THRUST_ATTACK.consumeClick();
+    }
+    
+    public static boolean isSpawnMobsPressed() {
+        return SPAWN_TEST_MOBS.consumeClick();
+    }
+    
+    public static boolean isClearMobsPressed() {
+        return CLEAR_TEST_MOBS.consumeClick();
     }
     
     public static AttackDirection getCurrentAttackDirection() {

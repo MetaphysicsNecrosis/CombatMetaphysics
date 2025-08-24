@@ -5,6 +5,7 @@ import com.example.examplemod.core.PlayerState;
 import com.example.examplemod.core.PlayerStateMachine;
 import com.example.examplemod.client.input.CombatInputHandler;
 import com.example.examplemod.client.CombatClientManager;
+import com.example.examplemod.core.WeaponColliderSystem;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.RenderType;
@@ -174,7 +175,7 @@ public class ResourceHUD {
     }
     
     /**
-     * Отображает информацию о состоянии combat системы
+     * Отображает информацию о состоянии combat системы в левом верхнем углу
      */
     private static void renderCombatState(GuiGraphics graphics, int screenWidth, int screenHeight) {
         Minecraft mc = Minecraft.getInstance();
@@ -182,33 +183,73 @@ public class ResourceHUD {
         
         // Получаем состояние игрока
         PlayerStateMachine stateMachine = CombatClientManager.getInstance().getPlayerState(mc.player.getUUID());
-        if (stateMachine == null) return;
+        if (stateMachine == null) {
+            // Если state machine не инициализирована, показываем это
+            graphics.drawString(mc.font, "Combat State: NOT INITIALIZED", 10, 10, 0xFFFF0000, true);
+            graphics.drawString(mc.font, "Use /combatmetaphysics test hud to initialize", 10, 22, 0xFFFFAA00, true);
+            return;
+        }
         
         PlayerState currentState = stateMachine.getCurrentState();
+        long timeInState = stateMachine.getTimeInCurrentState();
         
         // Позиция для отображения состояния (верхний левый угол)
         int x = 10;
         int y = 10;
         
-        // Отображаем текущее состояние
+        // Основная информация о состоянии
         String stateText = getStateDisplayName(currentState);
         int stateColor = getStateColor(currentState);
         
         graphics.drawString(mc.font, "Combat State: " + stateText, x, y, stateColor, true);
         y += 12;
         
+        // Время в состоянии
+        graphics.drawString(mc.font, String.format("Time: %.1fs", timeInState / 1000.0f), x, y, 0xFFAAAAAA, true);
+        y += 12;
+        
+        // Текущее действие если есть
+        String currentAction = stateMachine.getCurrentAction();
+        if (!currentAction.isEmpty()) {
+            graphics.drawString(mc.font, "Action: " + currentAction, x, y, stateColor, true);
+            y += 12;
+        }
+        
         // Отображаем дополнительную информацию в зависимости от состояния
         if (currentState.isMagicState()) {
             renderMagicStateInfo(graphics, stateMachine, x, y);
+            y += 24;
         } else if (currentState.isMeleeState()) {
             renderMeleeStateInfo(graphics, stateMachine, x, y);
+            y += 24;
         } else if (currentState.isDefensiveState()) {
             renderDefenseStateInfo(graphics, stateMachine, x, y);
+            y += 24;
+        }
+        
+        // Информация о ресурсах
+        var resourceManager = stateMachine.getResourceManager();
+        if (resourceManager != null) {
+            graphics.drawString(mc.font, String.format("Mana: %.0f/%.0f (%.0f reserved)", 
+                resourceManager.getCurrentMana(), resourceManager.getMaxMana(), resourceManager.getReservedMana()), 
+                x, y, 0xFF64B5F6, true);
+            y += 10;
+            graphics.drawString(mc.font, String.format("Stamina: %.0f/%.0f", 
+                resourceManager.getCurrentStamina(), resourceManager.getMaxStamina()), 
+                x, y, 0xFFFFC107, true);
+            y += 10;
         }
         
         // Отображаем прогресс заряжания атаки если активен
         if (CombatInputHandler.isMeleeCharging()) {
             renderChargeProgress(graphics, screenWidth, screenHeight);
+        }
+        
+        // Debug информация о WeaponColliderSystem performance
+        var perfStats = WeaponColliderSystem.getPerformanceStats();
+        if (perfStats.containsKey("cachedProfiles")) {
+            graphics.drawString(mc.font, String.format("Collision Cache: %s profiles", perfStats.get("cachedProfiles")), 
+                x, y, 0xFF888888, true);
         }
     }
     
@@ -298,11 +339,20 @@ public class ResourceHUD {
             case MELEE_ATTACKING -> "Attacking";
             case MELEE_RECOVERY -> "Melee Recovery";
             case DEFENSIVE_ACTION -> "Defense Prep";
+            case PEACEFUL -> "Peaceful state";
+            case COMBAT_STANCE -> "Combpat stance";
+            case ATTACK_WINDUP -> "Windup atack";
+            case ATTACK_ACTIVE -> "Active atack";
+            case ATTACK_RECOVERY -> "Recovey atack";
             case BLOCKING -> "Blocking";
             case PARRYING -> "Parrying";
+            case STUNNED -> "Stunned";
             case DODGING -> "Dodging";
             case DEFENSIVE_RECOVERY -> "Defense Recovery";
             case COOLDOWN -> "Cooldown";
+            case ATTACK_COOLDOWN -> "Cooldown atack";
+            case COMBO_WINDOW -> "Combo window";
+            case EXHAUSTED -> "Exhausted";
             case INTERRUPTED -> "INTERRUPTED";
         };
     }

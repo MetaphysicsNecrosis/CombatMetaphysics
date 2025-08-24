@@ -15,6 +15,7 @@ out
 *.wav
 *.txt
 *.md
+!guide.md
 *.png
 
 # gradle

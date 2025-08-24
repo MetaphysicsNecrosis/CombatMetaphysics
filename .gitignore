@@ -17,6 +17,7 @@ out
 *.md
 !guide.md
 *.png
+.claude/
 
 # gradle
 build

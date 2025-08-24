@@ -124,9 +124,7 @@ public class GothicInputHandler {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.screen != null) return;
         
-        // Регистрируем игрока в контроллере если нужно
         CombatController controller = CombatController.getInstance();
-        controller.registerPlayer(mc.player);
         
         if (event.getAction() == GLFW.GLFW_PRESS) {
             handleKeyPress(event.getKey(), mc, controller);
@@ -141,7 +139,6 @@ public class GothicInputHandler {
         if (mc.player == null || mc.screen != null) return;
         
         CombatController controller = CombatController.getInstance();
-        controller.registerPlayer(mc.player);
         
         // Обрабатываем ПКМ для блока/парирования
         if (event.getButton() == 1) { // ПКМ
@@ -155,6 +152,8 @@ public class GothicInputHandler {
     
     private static void handleKeyPress(int key, Minecraft mc, CombatController controller) {
         try {
+            // Регистрируем игрока при первом использовании (только один раз)
+            controller.registerPlayer(mc.player);
             // Переключение боевой стойки
             if (key == COMBAT_STANCE_KEY.getKey().getValue()) {
                 controller.toggleCombatStance(mc.player);

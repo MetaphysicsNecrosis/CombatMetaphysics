@@ -2,6 +2,7 @@ package com.example.examplemod.core;
 
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -71,6 +72,7 @@ public class GothicAttackSystem {
         private AttackPhase currentPhase;
         private long phaseStartTime;
         private Set<UUID> hitEntities; // Предотвращает множественные попадания
+        private boolean hitDetectionPerformed; // Предотвращает спам коллайдеров
         
         public AttackData(UUID playerId, WeaponType weaponType, AttackDirection direction, 
                          float baseDamage, float staminaCost) {
@@ -83,6 +85,7 @@ public class GothicAttackSystem {
             this.currentPhase = AttackPhase.WINDUP;
             this.phaseStartTime = startTime;
             this.hitEntities = new HashSet<>();
+            this.hitDetectionPerformed = false;
         }
         
         // Геттеры
@@ -101,6 +104,10 @@ public class GothicAttackSystem {
         public void advanceToPhase(AttackPhase newPhase) {
             this.currentPhase = newPhase;
             this.phaseStartTime = System.currentTimeMillis();
+            // Сбрасываем флаг hit detection при переходе в ACTIVE
+            if (newPhase == AttackPhase.ACTIVE) {
+                this.hitDetectionPerformed = false;
+            }
         }
         
         public boolean hasHitEntity(UUID entityId) {
@@ -109,6 +116,14 @@ public class GothicAttackSystem {
         
         public void addHitEntity(UUID entityId) {
             hitEntities.add(entityId);
+        }
+        
+        public boolean isHitDetectionPerformed() {
+            return hitDetectionPerformed;
+        }
+        
+        public void markHitDetectionPerformed() {
+            this.hitDetectionPerformed = true;
         }
     }
     
@@ -323,12 +338,20 @@ public class GothicAttackSystem {
     private void performHitDetection(AttackData attack) {
         UUID playerId = attack.getPlayerId();
         
+        // Проверяем что hit detection еще не был выполнен для этой фазы
+        if (attack.isHitDetectionPerformed()) {
+            return; // Уже выполнен
+        }
+        
         // Получаем Player объект (должен быть установлен через статический метод)
         Player player = getPlayerById(playerId);
         if (player == null) {
             LOGGER.warn("Cannot perform hit detection - no player instance for {}", playerId);
             return;
         }
+        
+        // Помечаем что hit detection выполняется
+        attack.markHitDetectionPerformed();
         
         // Конвертируем направление для WeaponColliderSystem
         DirectionalAttackSystem.AttackDirection legacyDirection = convertToLegacyDirection(attack.getDirection());
@@ -367,7 +390,7 @@ public class GothicAttackSystem {
             // Применяем урон
             applyDamageToTarget(target, finalDamage, attacker, attack);
             
-            LOGGER.debug("Hit applied to {}: damage={:.1f}, multiplier={:.2f}", 
+            LOGGER.debug("Hit applied to {}: damage={}, multiplier={}", 
                         target.getType().getDescription().getString(), finalDamage, damageMultiplier);
         }
     }
@@ -376,12 +399,14 @@ public class GothicAttackSystem {
      * Применяет урон к цели
      */
     private void applyDamageToTarget(Entity target, float damage, Player attacker, AttackData attack) {
-        // TODO: Интеграция с системой урона Minecraft
-        // Пока это заглушка
-        LOGGER.info("Damage applied: {} -> {} ({:.1f} damage)", 
-                   attacker.getName().getString(), 
-                   target.getType().getDescription().getString(), 
-                   damage);
+        // Применяем реальный урон
+        if (target instanceof LivingEntity livingTarget) {
+            livingTarget.hurt(attacker.damageSources().playerAttack(attacker), damage);
+            LOGGER.info("Damage applied: {} -> {} ({} damage)", 
+                       attacker.getName().getString(), 
+                       target.getType().getDescription().getString(), 
+                       String.format("%.1f", damage));
+        }
     }
     
     /**

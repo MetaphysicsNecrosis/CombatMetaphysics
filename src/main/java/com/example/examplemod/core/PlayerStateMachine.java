@@ -382,6 +382,13 @@ public class PlayerStateMachine {
         });
         
         stateHandlers.put(PlayerState.ATTACK_ACTIVE, event -> {
+            // Tick attack system during ACTIVE phase for hit detection
+            SCHEDULER.scheduleAtFixedRate(() -> {
+                if (currentState == PlayerState.ATTACK_ACTIVE && attackSystem != null) {
+                    attackSystem.tick(); // Process hit detection
+                }
+            }, 0, 50, TimeUnit.MILLISECONDS); // Every 50ms = 20Hz
+            
             SCHEDULER.schedule(() -> {
                 if (currentState == PlayerState.ATTACK_ACTIVE) {
                     transitionTo(PlayerState.ATTACK_RECOVERY, "Auto: active -> recovery", 400);
@@ -590,6 +597,8 @@ public class PlayerStateMachine {
     // Legacy compatibility methods
     public void setPlayerInstance(Player player) {
         this.playerInstance = player;
+        // Передаем Player объект в GothicAttackSystem для коллайдеров
+        GothicAttackSystem.setPlayerInstance(this.playerId, player);
     }
     
     public Player getPlayerInstance() {

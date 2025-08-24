@@ -466,8 +466,18 @@ public class WeaponColliderSystem {
      */
     public static Map<String, Object> getPerformanceStats() {
         Map<String, Object> stats = new HashMap<>();
-        stats.put("cachedProfiles", PROFILE_CACHE.size());
-        stats.put("totalFrames", PROFILE_CACHE.values().stream().mapToInt(List::size).sum());
+        try {
+            stats.put("cachedProfiles", PROFILE_CACHE.size());
+            // Thread-safe copy to avoid ConcurrentModificationException
+            int totalFrames = PROFILE_CACHE.values().stream()
+                .mapToInt(list -> list != null ? list.size() : 0)
+                .sum();
+            stats.put("totalFrames", totalFrames);
+        } catch (Exception e) {
+            // If concurrent modification occurs, return safe defaults
+            stats.put("cachedProfiles", 0);
+            stats.put("totalFrames", 0);
+        }
         return stats;
     }
 }

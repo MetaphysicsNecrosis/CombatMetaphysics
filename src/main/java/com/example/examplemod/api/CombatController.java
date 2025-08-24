@@ -38,10 +38,17 @@ public class CombatController {
      */
     public void registerPlayer(Player player) {
         UUID playerId = player.getUUID();
+        
+        // Проверяем что игрок еще не зарегистрирован
+        if (activePlayers.containsKey(playerId)) {
+            return; // Уже зарегистрирован
+        }
+        
         activePlayers.put(playerId, player);
         
-        // Инициализируем state machine
-        PlayerStateMachine.getInstance(playerId, null); // TODO: Передать ResourceManager
+        // Инициализируем state machine и устанавливаем Player объект
+        PlayerStateMachine stateMachine = PlayerStateMachine.getInstance(playerId, null); // TODO: Передать ResourceManager
+        stateMachine.setPlayerInstance(player);
         
         LOGGER.debug("Registered player {} for Gothic combat", player.getName().getString());
     }

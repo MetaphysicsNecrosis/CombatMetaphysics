@@ -1,6 +1,7 @@
 package com.example.examplemod.api;
 
 import com.example.examplemod.core.PlayerStateMachine;
+import com.example.examplemod.core.ResourceManager;
 import net.minecraft.world.entity.player.Player;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,8 +47,11 @@ public class CombatController {
         
         activePlayers.put(playerId, player);
         
-        // Инициализируем state machine и устанавливаем Player объект
-        PlayerStateMachine stateMachine = PlayerStateMachine.getInstance(playerId, null); // TODO: Передать ResourceManager
+        // Создаем ResourceManager для игрока
+        ResourceManager resourceManager = new ResourceManager(playerId, 100f, 100f);
+        
+        // Инициализируем state machine с ResourceManager и устанавливаем Player объект
+        PlayerStateMachine stateMachine = PlayerStateMachine.getInstance(playerId, resourceManager);
         stateMachine.setPlayerInstance(player);
         
         LOGGER.debug("Registered player {} for Gothic combat", player.getName().getString());

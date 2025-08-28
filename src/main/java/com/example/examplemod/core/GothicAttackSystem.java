@@ -7,6 +7,9 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.neoforged.neoforge.server.ServerLifecycleHooks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -239,12 +242,15 @@ public class GothicAttackSystem {
         float baseDamage = calculateBaseDamage(player, weaponType, direction);
         float staminaCost = calculateStaminaCost(weaponType, direction);
         
+        // Тратим стамину через StaminaManager (если он был передан через executeAttack)
+        // Стамина тратится в executeAttack методе
+        
         // Создаем данные атаки
         AttackData attackData = new AttackData(playerId, weaponType, direction, baseDamage, staminaCost);
         activeAttacks.put(playerId, attackData);
         
-        LOGGER.debug("Player {} started {} attack with {} (windup: {}ms)", 
-                    playerId, direction, weaponType, weaponType.windupDuration);
+        LOGGER.debug("Player {} started {} attack with {} (windup: {}ms, stamina cost: {})", 
+                    playerId, direction, weaponType, weaponType.windupDuration, staminaCost);
         
         return new AttackResult(true, "Attack started", 0, 0, false, 0);
     }
@@ -343,11 +349,17 @@ public class GothicAttackSystem {
             return; // Уже выполнен
         }
         
-        // Получаем Player объект (должен быть установлен через статический метод)
+        // Получаем Player объект из кэша или из мира
         Player player = getPlayerById(playerId);
         if (player == null) {
-            LOGGER.warn("Cannot perform hit detection - no player instance for {}", playerId);
-            return;
+            // Пытаемся найти игрока в мире
+            player = findPlayerInWorld(playerId);
+            if (player == null) {
+                LOGGER.warn("Cannot perform hit detection - player not found: {}", playerId);
+                return;
+            }
+            // Кэшируем найденного игрока
+            playerInstances.put(playerId, player);
         }
         
         // Помечаем что hit detection выполняется
@@ -365,6 +377,8 @@ public class GothicAttackSystem {
         
         if (hitResult.hasHits()) {
             processHits(attack, hitResult, player);
+        } else {
+            LOGGER.debug("No hits detected for attack {} direction {}", playerId, attack.getDirection());
         }
     }
     
@@ -399,13 +413,105 @@ public class GothicAttackSystem {
      * Применяет урон к цели
      */
     private void applyDamageToTarget(Entity target, float damage, Player attacker, AttackData attack) {
-        // Применяем реальный урон
-        if (target instanceof LivingEntity livingTarget) {
-            livingTarget.hurt(attacker.damageSources().playerAttack(attacker), damage);
-            LOGGER.info("Damage applied: {} -> {} ({} damage)", 
-                       attacker.getName().getString(), 
-                       target.getType().getDescription().getString(), 
-                       String.format("%.1f", damage));
+        if (!(target instanceof LivingEntity livingTarget)) {
+            return;
+        }
+        
+        // ВАЖНО: Урон должен применяться в главном потоке игры!
+        // Так как мы вызываемся из ScheduledExecutorService, нужно синхронизировать с главным потоком
+        if (!attacker.level().isClientSide()) {
+            // Серверная сторона - планируем выполнение в главном потоке
+            net.minecraft.server.MinecraftServer server = attacker.getServer();
+            if (server != null) {
+                server.execute(() -> {
+                    // Проверяем что цель еще жива
+                    if (livingTarget.isDeadOrDying()) {
+                        return;
+                    }
+                    
+                    // Применяем knockback
+                    Vec3 knockback = calculateKnockback(attacker, target, attack.getDirection());
+                    livingTarget.knockback(
+                        knockback.length(), 
+                        knockback.x, 
+                        knockback.z
+                    );
+                    
+                    // Применяем урон в главном потоке согласно NeoForge документации
+                    float healthBefore = livingTarget.getHealth();
+                    
+                    // Создаем правильный DamageSource для игрока
+                    var damageSource = attacker.level().damageSources().playerAttack(attacker);
+                    
+                    // Отладочная информация
+                    LOGGER.debug("Applying damage: attacker={}, target={}, damage={}, health_before={}", 
+                        attacker.getName().getString(), 
+                        target.getType().getDescription().getString(),
+                        damage,
+                        healthBefore);
+                    
+                    // Применяем урон напрямую через метод hurt
+                    livingTarget.hurt(damageSource, damage);
+                    
+                    float healthAfter = livingTarget.getHealth();
+                    float actualDamage = healthBefore - healthAfter;
+                    
+                    LOGGER.info("Gothic attack damage: {} -> {} (dealt: {}/{} damage, {} direction)", 
+                               attacker.getName().getString(), 
+                               target.getType().getDescription().getString(), 
+                               String.format("%.1f", actualDamage),
+                               String.format("%.1f", damage),
+                               attack.getDirection());
+                    
+                    // Звуковые эффекты при реальном уроне
+                    if (actualDamage > 0) {
+                        playHitSound(attacker, target, attack.getDirection());
+                    }
+                });
+            } else {
+                LOGGER.warn("Cannot apply damage - no server instance");
+            }
+        }
+    }
+    
+    /**
+     * Определяет тип урона по направлению атаки
+     */
+    private com.example.examplemod.core.defense.DamageType getDamageTypeForDirection(AttackDirection direction) {
+        return switch (direction) {
+            case LEFT, RIGHT -> com.example.examplemod.core.defense.DamageType.SLASHING;
+            case TOP -> com.example.examplemod.core.defense.DamageType.BLUDGEONING;
+            case THRUST -> com.example.examplemod.core.defense.DamageType.PIERCING;
+        };
+    }
+    
+    /**
+     * Рассчитывает knockback в зависимости от направления атаки
+     */
+    private Vec3 calculateKnockback(Player attacker, Entity target, AttackDirection direction) {
+        Vec3 attackVector = target.position().subtract(attacker.position()).normalize();
+        
+        float knockbackStrength = switch (direction) {
+            case LEFT, RIGHT -> 0.4f;  // Средний knockback для боковых ударов
+            case TOP -> 0.6f;           // Сильный knockback для удара сверху
+            case THRUST -> 0.3f;        // Слабый knockback для выпада
+        };
+        
+        return attackVector.scale(knockbackStrength);
+    }
+    
+    /**
+     * Воспроизводит звук попадания
+     */
+    private void playHitSound(Player attacker, Entity target, AttackDirection direction) {
+        // TODO: Интегрировать с CombatSoundManager
+        // Пока используем стандартные звуки Minecraft
+        Level level = attacker.level();
+        if (!level.isClientSide()) {
+            level.playSound(null, target.blockPosition(),
+                net.minecraft.sounds.SoundEvents.PLAYER_ATTACK_STRONG,
+                net.minecraft.sounds.SoundSource.PLAYERS,
+                1.0f, 1.0f);
         }
     }
     
@@ -433,6 +539,19 @@ public class GothicAttackSystem {
         }
         
         UUID playerId = player.getUUID();
+        
+        // Определяем тип оружия для расчета стоимости стамины
+        WeaponType weaponType = getWeaponType(player.getMainHandItem());
+        float staminaCost = calculateStaminaCost(weaponType, direction);
+        
+        // Проверяем и тратим стамину
+        if (staminaManager != null) {
+            StaminaManager.StaminaData staminaData = staminaManager.getStaminaData(playerId);
+            if (staminaData != null && !staminaData.tryConsume(staminaCost, "Gothic attack: " + direction)) {
+                return AttackResult.failed("Not enough stamina");
+            }
+        }
+        
         return startAttack(playerId, player, direction);
     }
     
@@ -455,6 +574,24 @@ public class GothicAttackSystem {
      */
     private static Player getPlayerById(UUID playerId) {
         return playerInstances.get(playerId);
+    }
+    
+    /**
+     * Ищет игрока в мире по UUID
+     */
+    private static Player findPlayerInWorld(UUID playerId) {
+        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+        if (server == null) {
+            return null;
+        }
+        
+        for (ServerLevel level : server.getAllLevels()) {
+            Player player = level.getPlayerByUUID(playerId);
+            if (player != null) {
+                return player;
+            }
+        }
+        return null;
     }
     
     /**
@@ -482,7 +619,7 @@ public class GothicAttackSystem {
      */
     private float calculateBaseDamage(Player player, WeaponType weaponType, AttackDirection direction) {
         ItemStack weapon = player.getMainHandItem();
-        float baseDamage = weapon.isEmpty() ? 2.0f : 8.0f; // Базовый урон
+        float baseDamage = weapon.isEmpty() ? 4.0f : 12.0f; // Увеличенный базовый урон для тестирования
         
         // Модификаторы по типу оружия
         float weaponMultiplier = switch (weaponType) {

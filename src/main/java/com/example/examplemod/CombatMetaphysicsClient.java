@@ -3,6 +3,8 @@ package com.example.examplemod;
 import com.example.examplemod.client.CombatClientManager;
 import com.example.examplemod.client.CombatHUDRenderer;
 import com.example.examplemod.client.qte.QTEClientManager;
+import com.example.examplemod.client.input.CombatInputHandler;
+import com.example.examplemod.api.CombatController;
 import net.minecraft.client.Minecraft;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -13,6 +15,7 @@ import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.InputEvent;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.gui.ConfigurationScreen;
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import net.neoforged.neoforge.common.NeoForge;
@@ -43,7 +46,9 @@ public class CombatMetaphysicsClient {
         NeoForge.EVENT_BUS.addListener(CombatMetaphysicsClient::onRenderGui);
         NeoForge.EVENT_BUS.addListener(CombatMetaphysicsClient::onClientTick);
         NeoForge.EVENT_BUS.addListener(CombatMetaphysicsClient::onKeyInput);
-        CombatMetaphysics.LOGGER.info("Event handlers registered (HUD, Tick, KeyInput)");
+        NeoForge.EVENT_BUS.addListener(CombatMetaphysicsClient::onPlayerLoggedIn);
+        NeoForge.EVENT_BUS.addListener(CombatMetaphysicsClient::onPlayerLoggedOut);
+        CombatMetaphysics.LOGGER.info("Event handlers registered (HUD, Tick, KeyInput, Player Events)");
     }
     
     /**
@@ -73,8 +78,10 @@ public class CombatMetaphysicsClient {
      * SINGLEPLAYER: Обработчик ввода клавиш для OSU QTE
      */
     public static void onKeyInput(InputEvent.Key event) {
-        // Передаем все нажатия клавиш в Combat Client Manager
-        // Он сам решит, нужно ли их обрабатывать (если есть активное QTE)
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null) return;
+        
+        // Передаем все нажатия клавиш в Combat Client Manager для QTE
         if (event.getAction() == 1) { // GLFW.GLFW_PRESS
             boolean handled = CombatClientManager.getInstance().handleKeyInput(
                 event.getKey(), 
@@ -83,9 +90,34 @@ public class CombatMetaphysicsClient {
                 event.getModifiers()
             );
             
-            // Если QTE обработало клавишу, отменяем дальнейшую обработку
-            // Примечание: В NeoForge InputEvent.Key не поддерживает setCanceled напрямую
-            // QTE система сама управляет обработкой клавиш
+            // Если QTE не обработало клавишу, обрабатываем как боевой ввод
+            if (!handled) {
+                CombatInputHandler.handleKeyPress(event.getKey(), mc, CombatController.getInstance());
+            }
+        } else if (event.getAction() == 0) { // GLFW.GLFW_RELEASE
+            CombatInputHandler.handleKeyRelease(event.getKey(), mc, CombatController.getInstance());
+        }
+    }
+    
+    /**
+     * Регистрация игрока при входе в мир
+     */
+    public static void onPlayerLoggedIn(ClientPlayerNetworkEvent.LoggingIn event) {
+        if (event.getPlayer() != null) {
+            CombatController.getInstance().registerPlayer(event.getPlayer());
+            CombatMetaphysics.LOGGER.info("Registered player {} for Gothic combat system", 
+                event.getPlayer().getName().getString());
+        }
+    }
+    
+    /**
+     * Отмена регистрации при выходе из мира
+     */
+    public static void onPlayerLoggedOut(ClientPlayerNetworkEvent.LoggingOut event) {
+        if (event.getPlayer() != null) {
+            CombatController.getInstance().unregisterPlayer(event.getPlayer());
+            CombatMetaphysics.LOGGER.info("Unregistered player {} from Gothic combat system", 
+                event.getPlayer().getName().getString());
         }
     }
 }

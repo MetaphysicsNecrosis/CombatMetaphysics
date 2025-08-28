@@ -49,6 +49,22 @@ public class CombatCommands {
                     .executes(CombatCommands::debugStateDisplay)
                 )
             )
+            .then(Commands.literal("gothic")
+                .then(Commands.literal("attack")
+                    .then(Commands.literal("left")
+                        .executes(ctx -> testGothicAttack(ctx, AttackDirection.LEFT))
+                    )
+                    .then(Commands.literal("right")
+                        .executes(ctx -> testGothicAttack(ctx, AttackDirection.RIGHT))
+                    )
+                    .then(Commands.literal("top")
+                        .executes(ctx -> testGothicAttack(ctx, AttackDirection.TOP))
+                    )
+                    .then(Commands.literal("thrust")
+                        .executes(ctx -> testGothicAttack(ctx, AttackDirection.THRUST))
+                    )
+                )
+            )
             .then(Commands.literal("test")
                 .then(Commands.literal("qte")
                     .then(Commands.literal("sequence")
@@ -530,6 +546,55 @@ public class CombatCommands {
             case TOP_ATTACK -> AttackDirection.TOP;
             case THRUST_ATTACK -> AttackDirection.THRUST;
         };
+    }
+    
+    /**
+     * Test Gothic attack command
+     */
+    private static int testGothicAttack(CommandContext<CommandSourceStack> context, AttackDirection direction) {
+        if (!context.getSource().isPlayer()) {
+            context.getSource().sendFailure(Component.literal("This command can only be executed by a player"));
+            return 0;
+        }
+        
+        var player = context.getSource().getPlayer();
+        var playerId = player.getUUID();
+        
+        // Register player if not already registered
+        var controller = com.example.examplemod.api.CombatController.getInstance();
+        controller.registerPlayer(player);
+        
+        // Get state machine
+        PlayerStateMachine stateMachine = PlayerStateMachine.getInstance(playerId);
+        if (stateMachine == null) {
+            context.getSource().sendFailure(Component.literal("Failed to get state machine"));
+            return 0;
+        }
+        
+        // Ensure in combat stance
+        if (stateMachine.getCurrentState() == PlayerState.PEACEFUL) {
+            stateMachine.transitionTo(PlayerState.COMBAT_STANCE, "Test command");
+        }
+        
+        // Execute Gothic attack
+        AttackResult result = stateMachine.startGothicAttack(direction);
+        
+        if (result.isSuccess()) {
+            context.getSource().sendSuccess(() -> Component.literal(
+                String.format("✓ Gothic %s attack started! Damage: %.1f", 
+                    direction.name(), result.getDamage())
+            ), true);
+            
+            // Log for debugging
+            CombatMetaphysics.LOGGER.info("Gothic attack test - Direction: {}, Success: {}", 
+                direction, result.isSuccess());
+        } else {
+            context.getSource().sendFailure(Component.literal(
+                "Gothic attack failed: " + result.getMessage()
+            ));
+        }
+        
+        return 1;
     }
     
     /**

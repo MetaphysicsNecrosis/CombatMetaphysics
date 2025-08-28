@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -51,6 +52,9 @@ public class PlayerStateMachine {
     private CompletableFuture<QTEResult> currentQTE;
     private String currentComboChain;
     private int comboStep;
+    
+    // Task management
+    private ScheduledFuture<?> attackTickTask;
     
     private PlayerStateMachine(UUID playerId, ResourceManager resourceManager) {
         this.playerId = playerId;
@@ -188,6 +192,12 @@ public class PlayerStateMachine {
             return GothicAttackSystem.AttackResult.failed("Cannot start attack from state: " + currentState);
         }
         
+        // Ensure we have player instance
+        if (playerInstance == null) {
+            LOGGER.error("No player instance set for {}", playerId);
+            return GothicAttackSystem.AttackResult.failed("No player instance");
+        }
+        
         // Set current player context for stamina manager
         staminaManager.setCurrentPlayer(playerId);
         
@@ -202,8 +212,16 @@ public class PlayerStateMachine {
             return GothicAttackSystem.AttackResult.failed(result.getMessage());
         }
         
-        // Execute attack through Gothic system
-        return attackSystem.executeAttack(direction, staminaManager, playerInstance);
+        // Start attack in Gothic system
+        GothicAttackSystem.AttackResult attackResult = attackSystem.executeAttack(direction, staminaManager, playerInstance);
+        
+        // Consume stamina if attack started successfully
+        if (attackResult.isSuccess()) {
+            // Stamina уже потрачена через getStaminaData в GothicAttackSystem
+            LOGGER.debug("Gothic attack started: {} direction {} ", playerId, direction);
+        }
+        
+        return attackResult;
     }
     
     /**
@@ -382,8 +400,13 @@ public class PlayerStateMachine {
         });
         
         stateHandlers.put(PlayerState.ATTACK_ACTIVE, event -> {
+            // Cancel any previous tick task
+            if (attackTickTask != null && !attackTickTask.isDone()) {
+                attackTickTask.cancel(false);
+            }
+            
             // Tick attack system during ACTIVE phase for hit detection
-            SCHEDULER.scheduleAtFixedRate(() -> {
+            attackTickTask = SCHEDULER.scheduleAtFixedRate(() -> {
                 if (currentState == PlayerState.ATTACK_ACTIVE && attackSystem != null) {
                     attackSystem.tick(); // Process hit detection
                 }
@@ -391,6 +414,10 @@ public class PlayerStateMachine {
             
             SCHEDULER.schedule(() -> {
                 if (currentState == PlayerState.ATTACK_ACTIVE) {
+                    // Stop ticking when transitioning out of ACTIVE
+                    if (attackTickTask != null) {
+                        attackTickTask.cancel(false);
+                    }
                     transitionTo(PlayerState.ATTACK_RECOVERY, "Auto: active -> recovery", 400);
                 }
             }, 200, TimeUnit.MILLISECONDS);

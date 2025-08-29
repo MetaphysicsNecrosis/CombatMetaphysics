@@ -26,8 +26,12 @@ import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
+import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import com.example.examplemod.commands.CombatCommands;
+import com.example.examplemod.commands.SpellTestCommand;
 import com.example.examplemod.sounds.CombatSounds;
+import com.example.examplemod.core.spells.parameters.ModSpellParameters;
+import com.example.examplemod.blocks.SpellCraftingTableBlock;
 import net.neoforged.neoforge.registries.DeferredBlock;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredItem;
@@ -52,6 +56,12 @@ public class CombatMetaphysics {
     // Creates a new BlockItem with the id "combatmetaphysics:example_block", combining the namespace and path
     public static final DeferredItem<BlockItem> EXAMPLE_BLOCK_ITEM = ITEMS.registerSimpleBlockItem("example_block", EXAMPLE_BLOCK);
 
+    // Spell crafting table
+    public static final DeferredBlock<SpellCraftingTableBlock> SPELL_CRAFTING_TABLE = BLOCKS.registerBlock("spell_crafting_table", 
+        SpellCraftingTableBlock::new,
+        BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(2.0f));
+    public static final DeferredItem<BlockItem> SPELL_CRAFTING_TABLE_ITEM = ITEMS.registerSimpleBlockItem("spell_crafting_table", SPELL_CRAFTING_TABLE);
+
     // Creates a new food item with the id "combatmetaphysics:example_id", nutrition 1 and saturation 2
     public static final DeferredItem<Item> EXAMPLE_ITEM = ITEMS.registerSimpleItem("example_item", new Item.Properties().food(new FoodProperties.Builder()
             .alwaysEdible().nutrition(1).saturationModifier(2f).build()));
@@ -62,7 +72,8 @@ public class CombatMetaphysics {
             .withTabsBefore(CreativeModeTabs.COMBAT)
             .icon(() -> EXAMPLE_ITEM.get().getDefaultInstance())
             .displayItems((parameters, output) -> {
-                output.accept(EXAMPLE_ITEM.get()); // Add the example item to the tab. For your own tabs, this method is preferred over the event
+                output.accept(EXAMPLE_ITEM.get());
+                output.accept(SPELL_CRAFTING_TABLE_ITEM.get());
             }).build());
 
     // The constructor for the mod class is the first code that is run when your mod is loaded.
@@ -79,6 +90,9 @@ public class CombatMetaphysics {
         CREATIVE_MODE_TABS.register(modEventBus);
         // Register combat sounds
         CombatSounds.SOUND_EVENTS.register(modEventBus);
+        
+        // Register spell parameters
+        ModSpellParameters.init(modEventBus);
 
         // Register ourselves for server and other game events we are interested in.
         // Note that this is necessary if and only if we want *this* class (CombatMetaphysics) to respond directly to events.
@@ -95,6 +109,16 @@ public class CombatMetaphysics {
     private void commonSetup(FMLCommonSetupEvent event) {
         // Some common setup code
         LOGGER.info("HELLO FROM COMMON SETUP");
+
+        // Initialize Combat Magic System
+        event.enqueueWork(() -> {
+            try {
+                com.example.examplemod.core.CombatMagicSystem.getInstance().initialize();
+                LOGGER.info("Combat Magic System initialized successfully");
+            } catch (Exception e) {
+                LOGGER.error("Failed to initialize Combat Magic System", e);
+            }
+        });
 
         if (Config.LOG_DIRT_BLOCK.getAsBoolean()) {
             LOGGER.info("DIRT BLOCK >> {}", BuiltInRegistries.BLOCK.getKey(Blocks.DIRT));
@@ -115,8 +139,19 @@ public class CombatMetaphysics {
     // SINGLEPLAYER: Команды регистрируются локально
     @SubscribeEvent
     public void onRegisterCommands(RegisterCommandsEvent event) {
-        // Register our combat commands for singleplayer
         CombatCommands.register(event.getDispatcher());
+        SpellTestCommand.register(event.getDispatcher());
         LOGGER.info("Combat commands registered for SINGLEPLAYER");
+    }
+
+    // Остановка сервера - завершить работу системы магии
+    @SubscribeEvent
+    public void onServerStopping(ServerStoppingEvent event) {
+        try {
+            com.example.examplemod.core.CombatMagicSystem.getInstance().shutdown();
+            LOGGER.info("Combat Magic System shut down gracefully");
+        } catch (Exception e) {
+            LOGGER.error("Error during Combat Magic System shutdown", e);
+        }
     }
 }

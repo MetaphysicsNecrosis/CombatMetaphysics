@@ -1,10 +1,5 @@
 package com.example.examplemod;
 
-import com.example.examplemod.client.CombatClientManager;
-import com.example.examplemod.client.CombatHUDRenderer;
-import com.example.examplemod.client.qte.QTEClientManager;
-import com.example.examplemod.client.input.CombatInputHandler;
-import com.example.examplemod.api.CombatController;
 import net.minecraft.client.Minecraft;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -38,9 +33,8 @@ public class CombatMetaphysicsClient {
         CombatMetaphysics.LOGGER.info("HELLO FROM CLIENT SETUP");
         CombatMetaphysics.LOGGER.info("MINECRAFT NAME >> {}", Minecraft.getInstance().getUser().getName());
         
-        // Инициализируем клиентский менеджер combat системы
-        CombatClientManager.getInstance();
-        CombatMetaphysics.LOGGER.info("Combat Client Manager initialized");
+        // TODO: Инициализировать клиентские компоненты системы магии когда они будут готовы
+        CombatMetaphysics.LOGGER.info("Combat Magic Client components will be initialized here");
         
         // Регистрируем обработчики событий
         NeoForge.EVENT_BUS.addListener(CombatMetaphysicsClient::onRenderGui);
@@ -52,50 +46,46 @@ public class CombatMetaphysicsClient {
     }
     
     /**
-     * SINGLEPLAYER: Главный обработчик тиков клиента для OSU QTE системы
+     * Главный обработчик тиков клиента для системы магии
      */
     public static void onClientTick(ClientTickEvent.Post event) {
-        // Обновляем Combat Client Manager каждый тик
-        CombatClientManager.getInstance().tick();
-    }
-    
-    /**
-     * SINGLEPLAYER: Обработчик рендеринга HUD с OSU QTE
-     */
-    public static void onRenderGui(RenderGuiEvent.Post event) {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.player != null && !mc.options.hideGui) {
-            // Используем новый интегрированный рендер через CombatClientManager
-            CombatClientManager.getInstance().renderHUD(
-                event.getGuiGraphics(), 
-                mc.getWindow().getGuiScaledWidth(), 
-                mc.getWindow().getGuiScaledHeight()
-            );
+        // TODO: Обновлять клиентские компоненты каждый тик
+        // Пока просто проверяем что система инициализирована
+        var system = com.example.examplemod.core.CombatMagicSystem.getInstance();
+        if (system.isInitialized()) {
+            // Система готова для клиентских операций
         }
     }
     
     /**
-     * SINGLEPLAYER: Обработчик ввода клавиш для OSU QTE
+     * Обработчик рендеринга HUD
+     */
+    public static void onRenderGui(RenderGuiEvent.Post event) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player != null && !mc.options.hideGui) {
+            // TODO: Рендерить HUD элементы системы магии
+            // - Полоски маны
+            // - QTE интерфейс
+            // - Активные заклинания
+        }
+    }
+    
+    /**
+     * Обработчик ввода клавиш
      */
     public static void onKeyInput(InputEvent.Key event) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
         
-        // Передаем все нажатия клавиш в Combat Client Manager для QTE
+        // TODO: Обработка клавиш для системы магии
+        // - QTE события
+        // - Быстрые заклинания
+        // - Отмена заклинаний
+        
         if (event.getAction() == 1) { // GLFW.GLFW_PRESS
-            boolean handled = CombatClientManager.getInstance().handleKeyInput(
-                event.getKey(), 
-                event.getScanCode(), 
-                event.getAction(), 
-                event.getModifiers()
-            );
-            
-            // Если QTE не обработало клавишу, обрабатываем как боевой ввод
-            if (!handled) {
-                CombatInputHandler.handleKeyPress(event.getKey(), mc, CombatController.getInstance());
-            }
+            // Обработка нажатия клавиш
         } else if (event.getAction() == 0) { // GLFW.GLFW_RELEASE
-            CombatInputHandler.handleKeyRelease(event.getKey(), mc, CombatController.getInstance());
+            // Обработка отпускания клавиш
         }
     }
     
@@ -104,8 +94,8 @@ public class CombatMetaphysicsClient {
      */
     public static void onPlayerLoggedIn(ClientPlayerNetworkEvent.LoggingIn event) {
         if (event.getPlayer() != null) {
-            CombatController.getInstance().registerPlayer(event.getPlayer());
-            CombatMetaphysics.LOGGER.info("Registered player {} for Gothic combat system", 
+            // TODO: Инициализация клиентских данных игрока
+            CombatMetaphysics.LOGGER.info("Player {} logged in - initializing client magic system", 
                 event.getPlayer().getName().getString());
         }
     }
@@ -115,8 +105,8 @@ public class CombatMetaphysicsClient {
      */
     public static void onPlayerLoggedOut(ClientPlayerNetworkEvent.LoggingOut event) {
         if (event.getPlayer() != null) {
-            CombatController.getInstance().unregisterPlayer(event.getPlayer());
-            CombatMetaphysics.LOGGER.info("Unregistered player {} from Gothic combat system", 
+            // TODO: Очистка клиентских данных игрока
+            CombatMetaphysics.LOGGER.info("Player {} logged out - cleaning up client magic system", 
                 event.getPlayer().getName().getString());
         }
     }

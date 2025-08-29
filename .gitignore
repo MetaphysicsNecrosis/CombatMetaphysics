@@ -18,6 +18,7 @@ out
 !guide.md
 *.png
 .claude/
+version-1.21.5/
 
 # gradle
 build

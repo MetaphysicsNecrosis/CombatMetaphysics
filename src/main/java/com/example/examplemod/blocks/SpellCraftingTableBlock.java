@@ -40,9 +40,14 @@ public class SpellCraftingTableBlock extends Block {
      */
     private void openSpellCraftingInterface(Player player, Level level, BlockPos pos) {
         
-        if (!level.isClientSide) {
+        if (level.isClientSide) {
+            // Открываем GUI на клиенте
+            net.minecraft.client.Minecraft.getInstance().setScreen(
+                new com.example.examplemod.client.gui.SpellCraftingScreen()
+            );
+        } else {
             player.displayClientMessage(Component.literal("§aМагический верстак активирован!"), false);
-            player.displayClientMessage(Component.literal("§eИспользуй команды /spell для тестирования"), false);
+            player.displayClientMessage(Component.literal("§eИспользуй GUI или команды /spell"), false);
         }
     }
 }

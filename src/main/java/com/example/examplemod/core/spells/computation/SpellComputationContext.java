@@ -1,7 +1,9 @@
 package com.example.examplemod.core.spells.computation;
 
 import com.example.examplemod.core.spells.parameters.SpellParameters;
+import com.example.examplemod.core.spells.collision.CollisionSnapshot;
 import java.util.UUID;
+import java.util.Optional;
 
 /**
  * Thread-safe контекст для вычисления параметров заклинания
@@ -31,13 +33,17 @@ public class SpellComputationContext {
     private final float worldTime;
     private final int dimensionId;
     
+    // Снепшот коллизий - thread-safe данные для Collision Thread
+    private final CollisionSnapshot collisionSnapshot;
+    
     public SpellComputationContext(UUID spellInstanceId, String spellType, 
                                   SpellParameters allParameters, float currentTime,
                                   double casterX, double casterY, double casterZ,
                                   float casterYaw, float casterPitch,
                                   float casterManaMax, float casterManaInitiationAvailable,
                                   float casterManaAmplificationAvailable,
-                                  boolean isRaining, float worldTime, int dimensionId) {
+                                  boolean isRaining, float worldTime, int dimensionId,
+                                  CollisionSnapshot collisionSnapshot) {
         this.spellInstanceId = spellInstanceId;
         this.spellType = spellType;
         this.allParameters = allParameters.copy(); // Defensive copy
@@ -53,6 +59,7 @@ public class SpellComputationContext {
         this.isRaining = isRaining;
         this.worldTime = worldTime;
         this.dimensionId = dimensionId;
+        this.collisionSnapshot = collisionSnapshot;
     }
     
     // Getters - все thread-safe
@@ -74,6 +81,20 @@ public class SpellComputationContext {
     public boolean isRaining() { return isRaining; }
     public float getWorldTime() { return worldTime; }
     public int getDimensionId() { return dimensionId; }
+    
+    /**
+     * Получить снепшот коллизий для thread-safe обработки
+     */
+    public CollisionSnapshot getCollisionSnapshot() { 
+        return collisionSnapshot; 
+    }
+    
+    /**
+     * Проверить доступен ли снепшот коллизий
+     */
+    public boolean hasCollisionSnapshot() {
+        return collisionSnapshot != null;
+    }
     
     /**
      * Получить параметр как число

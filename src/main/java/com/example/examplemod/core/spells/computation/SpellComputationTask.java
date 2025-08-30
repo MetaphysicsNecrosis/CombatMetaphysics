@@ -69,6 +69,11 @@ public class SpellComputationTask implements Callable<SpellComputationTaskResult
             // === ФАЗА 4: Агрегация результатов ===
             SpellComputationTaskResult taskResult = aggregateResults(spellId, results, startTime);
             
+            // Передаем снепшот коллизий для Collision Thread
+            if (context.hasCollisionSnapshot()) {
+                taskResult.setCollisionSnapshot(context.getCollisionSnapshot());
+            }
+            
             return taskResult;
             
         } catch (Exception e) {

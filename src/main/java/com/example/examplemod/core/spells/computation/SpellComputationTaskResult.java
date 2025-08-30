@@ -1,5 +1,8 @@
 package com.example.examplemod.core.spells.computation;
 
+import com.example.examplemod.core.spells.collision.CollisionSnapshot;
+import com.example.examplemod.core.geometry.CollisionDetector;
+
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
@@ -28,6 +31,11 @@ public class SpellComputationTaskResult {
     private final Map<String, String> collisionModifications = new ConcurrentHashMap<>();
     private final Map<String, Object> formModifications = new ConcurrentHashMap<>();
     private final List<String> visualEffects = new ArrayList<>();
+    
+    // Collision data from Collision Thread
+    private CollisionSnapshot collisionSnapshot = null;
+    private CollisionDetector.CollisionResult collisionResult = null;
+    private final Map<String, String> errors = new ConcurrentHashMap<>();
     
     // Статистика и флаги
     private volatile boolean hasErrors = false;
@@ -190,6 +198,55 @@ public class SpellComputationTaskResult {
     public String getAggregatedString(String key, String defaultValue) {
         Object value = aggregatedValues.get(key);
         return value instanceof String str ? str : defaultValue;
+    }
+    
+    // === Методы для работы с коллизиями ===
+    
+    /**
+     * Добавить данные коллизий из Collision Thread
+     */
+    public void addCollisionData(CollisionDetector.CollisionResult result) {
+        this.collisionResult = result;
+        if (result.hasCollisions()) {
+            needsMainThreadApplication = true; // Есть коллизии - нужно применить в Main Thread
+        }
+    }
+    
+    /**
+     * Установить снепшот коллизий
+     */
+    public void setCollisionSnapshot(CollisionSnapshot snapshot) {
+        this.collisionSnapshot = snapshot;
+    }
+    
+    /**
+     * Получить снепшот коллизий
+     */
+    public CollisionSnapshot getCollisionSnapshot() {
+        return collisionSnapshot;
+    }
+    
+    /**
+     * Получить результат коллизий
+     */
+    public CollisionDetector.CollisionResult getCollisionResult() {
+        return collisionResult;
+    }
+    
+    /**
+     * Добавить ошибку в результат
+     */
+    public void addError(String errorType, String message) {
+        errors.put(errorType, message);
+        hasErrors = true;
+    }
+    
+    /**
+     * Получить значение параметра как double
+     */
+    public double getParameterValue(String key, double defaultValue) {
+        Object value = aggregatedValues.get(key);
+        return value instanceof Number number ? number.doubleValue() : defaultValue;
     }
     
     // === Статические методы ===
